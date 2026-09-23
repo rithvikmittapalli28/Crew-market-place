@@ -1,0 +1,1196 @@
+// ==============================================================================
+// CREWN - Enterprise Relational Database Schema (PostgreSQL)
+// Two-Sided Marketplace & Creative Collaboration Platform
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ------------------------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------------------------
+
+enum UserRole {
+  BUSINESS
+  FREELANCER
+  ADMIN
+}
+
+enum BusinessRole {
+  OWNER
+  MANAGER
+  PROJECT_MANAGER
+  FINANCE
+  MEMBER
+}
+
+enum TeamRole {
+  LEADER
+  CORE_MEMBER
+  COLLABORATOR
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum ProjectStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectMemberRole {
+  OWNER
+  MANAGER
+  FREELANCER
+  TEAM_MEMBER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  SUBMITTED
+  IN_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DeliverableStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  REVISION_REQUESTED
+  APPROVED
+}
+
+enum ReviewDecision {
+  APPROVED
+  REVISION_REQUESTED
+}
+
+enum MilestoneStatus {
+  PENDING
+  ACTIVE
+  SUBMITTED
+  APPROVED
+  PAID
+}
+
+enum MilestonePaymentStatus {
+  PENDING
+  HELD_IN_ESCROW
+  RELEASED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  PARTIALLY_AVAILABLE
+  BUSY
+  UNAVAILABLE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+enum ConversationType {
+  DIRECT
+  PROJECT
+  TEAM
+}
+
+enum NotificationType {
+  MILESTONE
+  DELIVERABLE
+  TASK
+  PAYMENT
+  MESSAGE
+  SYSTEM
+}
+
+enum ContractStatus {
+  DRAFT
+  SENT
+  EXECUTED
+  TERMINATED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_MEDIATION
+  RESOLVED
+  CANCELLED
+}
+
+// ------------------------------------------------------------------------------
+// 1. IDENTITY & USER
+// ------------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String?
+  name          String?
+  avatarUrl     String?
+  phone         String?
+  role          UserRole  @default(BUSINESS)
+  isVerified    Boolean   @default(false)
+  onboarded     Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Auth Sessions
+  sessions              Session[]
+
+  // Business Relationships
+  businessMemberships   BusinessMember[]
+  createdProjects       Project[]             @relation("ProjectCreator")
+
+  // Freelancer Profile
+  freelancerProfile     FreelancerProfile?
+
+  // Project Collaboration Memberships
+  projectMemberships    ProjectMember[]
+
+  // Freelancer Teams
+  teamMemberships       TeamMember[]
+  ledTeams              Team[]                @relation("TeamLeader")
+
+  // File Uploads
+  uploadedFiles         File[]                @relation("UserUploadedFiles")
+
+  // Tasks
+  assignedTasks         Task[]                @relation("TaskAssignee")
+  taskComments          TaskComment[]
+  statusHistoryChanges  TaskStatusHistory[]
+
+  // Deliverables
+  submittedVersions     DeliverableVersion[]  @relation("VersionSubmitter")
+  deliverableReviews    DeliverableReview[]   @relation("ReviewAuthor")
+
+  // Communications
+  conversationMembers   ConversationMember[]
+  sentMessages          Message[]             @relation("MessageSender")
+
+  // Notifications
+  notifications         Notification[]
+  notificationSettings  NotificationPreference?
+
+  // Financial & Invoicing
+  invoicesIssued        Invoice[]             @relation("InvoiceRecipient")
+  payoutsReceived       Payout[]              @relation("UserPayouts")
+
+  // Reviews & Feedback
+  reviewsGiven          Review[]              @relation("ReviewsWritten")
+  reviewsReceived       Review[]              @relation("ReviewsReceived")
+
+  // Contracts & Disputes
+  contractParties       ContractParty[]
+  disputesInitiated     Dispute[]             @relation("DisputeInitiator")
+  disputesDefended      Dispute[]             @relation("DisputeRespondent")
+  disputeMessages       DisputeMessage[]
+
+  // Activity Audit Log
+  activityLogs          ActivityLog[]         @relation("ActorActivity")
+
+  @@index([email])
+  @@index([role])
+}
+
+model Session {
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash             String    @unique
+  expiresAt             DateTime
+  lastActivityAt        DateTime  @default(now())
+  revokedAt             DateTime?
+  lastReauthenticatedAt DateTime  @default(now())
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model VerificationToken {
+  id         String   @id @default(cuid())
+  identifier String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([identifier, tokenHash])
+  @@index([tokenHash])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([email, tokenHash])
+  @@index([tokenHash])
+}
+
+// ------------------------------------------------------------------------------
+// 2. BUSINESS ORGANIZATION
+// ------------------------------------------------------------------------------
+
+model Business {
+  id            String            @id @default(cuid())
+  name          String
+  slug          String            @unique
+  legalName     String?
+  taxId         String?
+  website       String?
+  logoUrl       String?
+  description   String?           @db.Text
+  industry      String?
+  companySize   String?           // "1-10", "11-50", "51-200", "200+"
+  isVerified    Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  members       BusinessMember[]
+  projects      Project[]
+  contracts     Contract[]
+  invoices      Invoice[]
+
+  @@index([slug])
+  @@index([isVerified])
+}
+
+model BusinessMember {
+  id          String        @id @default(cuid())
+  businessId  String
+  userId      String
+  role        BusinessRole  @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([businessId])
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------------------
+// 3. FREELANCER MODEL, SERVICES & AVAILABILITY
+// ------------------------------------------------------------------------------
+
+model FreelancerProfile {
+  id              String            @id @default(cuid())
+  userId          String            @unique
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  headline        String
+  bio             String            @db.Text
+  location        String?
+  hourlyRate      Decimal?          @db.Decimal(10, 2)
+  yearsExperience Int               @default(1)
+  isVerified      Boolean           @default(false)
+  rating          Decimal           @default(0.0) @db.Decimal(3, 2)
+  reviewCount     Int               @default(0)
+  website         String?
+  instagramUrl    String?
+  behanceUrl      String?
+  vimeoUrl        String?
+
+  availability    Availability?
+  services        Service[]
+  portfolioItems  PortfolioItem[]
+  categories      ProfileCategory[]
+  skills          ProfileSkill[]
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([isVerified])
+}
+
+model Availability {
+  id                  String              @id @default(cuid())
+  freelancerProfileId String              @unique
+  freelancerProfile   FreelancerProfile   @relation(fields: [freelancerProfileId], references: [id], onDelete: Cascade)
+
+  status              AvailabilityStatus  @default(AVAILABLE)
+  hoursPerWeek        Int                 @default(40)
+  nextAvailableDate   DateTime?
+  updatedAt           DateTime            @updatedAt
+}
+
+model Service {
+  id                  String              @id @default(cuid())
+  freelancerProfileId String
+  freelancerProfile   FreelancerProfile   @relation(fields: [freelancerProfileId], references: [id], onDelete: Cascade)
+
+  title               String
+  description         String              @db.Text
+  basePrice           Decimal             @db.Decimal(10, 2)
+  currency            String              @default("INR")
+  deliveryDays        Int                 @default(7)
+  revisionLimit       Int                 @default(2)
+  isActive            Boolean             @default(true)
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([freelancerProfileId])
+}
+
+model PortfolioItem {
+  id                  String              @id @default(cuid())
+  freelancerProfileId String
+  freelancerProfile   FreelancerProfile   @relation(fields: [freelancerProfileId], references: [id], onDelete: Cascade)
+
+  title               String
+  description         String?             @db.Text
+  mediaType           MediaType           @default(IMAGE)
+  externalUrl         String?
+  coverFileId         String?
+  coverFile           File?               @relation("PortfolioCoverFile", fields: [coverFileId], references: [id], onDelete: SetNull)
+
+  isFeatured          Boolean             @default(false)
+  viewCount           Int                 @default(0)
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([freelancerProfileId])
+}
+
+// ------------------------------------------------------------------------------
+// 4. TAXONOMIES: CATEGORIES & SKILLS
+// ------------------------------------------------------------------------------
+
+model Category {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  slug        String            @unique
+  description String?
+  icon        String?
+
+  profiles    ProfileCategory[]
+  projects    ProjectCategory[]
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model Skill {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  slug        String            @unique
+
+  profiles    ProfileSkill[]
+  projects    ProjectSkill[]
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ProfileCategory {
+  freelancerProfileId String
+  categoryId          String
+
+  freelancerProfile   FreelancerProfile @relation(fields: [freelancerProfileId], references: [id], onDelete: Cascade)
+  category            Category          @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([freelancerProfileId, categoryId])
+}
+
+model ProfileSkill {
+  freelancerProfileId String
+  skillId             String
+
+  freelancerProfile   FreelancerProfile @relation(fields: [freelancerProfileId], references: [id], onDelete: Cascade)
+  skill               Skill             @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([freelancerProfileId, skillId])
+}
+
+// ------------------------------------------------------------------------------
+// 5. FREELANCER TEAMS
+// ------------------------------------------------------------------------------
+
+model Team {
+  id                String            @id @default(cuid())
+  name              String
+  slug              String            @unique
+  tagline           String?
+  bio               String?           @db.Text
+  logoUrl           String?
+  leadFreelancerId  String
+  leadFreelancer    User              @relation("TeamLeader", fields: [leadFreelancerId], references: [id], onDelete: Restrict)
+  isVerified        Boolean           @default(false)
+
+  members           TeamMember[]
+  invitations       TeamInvitation[]
+  assignedProjects  ProjectMember[]
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([slug])
+  @@index([leadFreelancerId])
+}
+
+model TeamMember {
+  id            String        @id @default(cuid())
+  teamId        String
+  freelancerId  String
+  role          TeamRole      @default(COLLABORATOR)
+  joinedAt      DateTime      @default(now())
+
+  team          Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  freelancer    User          @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, freelancerId])
+  @@index([teamId])
+  @@index([freelancerId])
+}
+
+model TeamInvitation {
+  id            String            @id @default(cuid())
+  teamId        String
+  inviteeEmail  String
+  role          TeamRole          @default(COLLABORATOR)
+  status        InvitationStatus  @default(PENDING)
+  token         String            @unique
+  expiresAt     DateTime
+
+  team          Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([teamId])
+  @@index([inviteeEmail])
+  @@index([token])
+}
+
+// ------------------------------------------------------------------------------
+// 6. MULTI-PARTICIPANT PROJECT MODEL
+// ------------------------------------------------------------------------------
+
+model Project {
+  id            String            @id @default(cuid())
+  businessId    String
+  business      Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdById   String
+  createdBy     User              @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  title         String
+  description   String            @db.Text
+  budgetMin     Decimal?          @db.Decimal(10, 2)
+  budgetMax     Decimal?          @db.Decimal(10, 2)
+  currency      String            @default("INR")
+  startDate     DateTime?
+  deadline      DateTime?
+  status        ProjectStatus     @default(DRAFT)
+
+  members       ProjectMember[]
+  invitations   ProjectInvitation[]
+  milestones    Milestone[]
+  tasks         Task[]
+  deliverables  Deliverable[]
+  files         File[]
+  categories    ProjectCategory[]
+  skills        ProjectSkill[]
+  contracts     Contract[]
+  reviews       Review[]
+  disputes      Dispute[]
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([businessId])
+  @@index([createdById])
+  @@index([status])
+}
+
+model ProjectMember {
+  id          String            @id @default(cuid())
+  projectId   String
+  userId      String
+  teamId      String?
+  role        ProjectMemberRole @default(FREELANCER)
+  joinedAt    DateTime          @default(now())
+
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team        Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([teamId])
+}
+
+model ProjectInvitation {
+  id            String            @id @default(cuid())
+  projectId     String
+  inviteeEmail  String
+  role          ProjectMemberRole @default(FREELANCER)
+  status        InvitationStatus  @default(PENDING)
+  token         String            @unique
+  expiresAt     DateTime
+
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([projectId])
+  @@index([inviteeEmail])
+  @@index([token])
+}
+
+model ProjectCategory {
+  projectId   String
+  categoryId  String
+
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, categoryId])
+}
+
+model ProjectSkill {
+  projectId String
+  skillId   String
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  skill     Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, skillId])
+}
+
+// ------------------------------------------------------------------------------
+// 7. TASK SYSTEM & DEPENDENCIES
+// ------------------------------------------------------------------------------
+
+model Task {
+  id              String              @id @default(cuid())
+  projectId       String
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId     String?
+  milestone       Milestone?          @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  assignedToId    String?
+  assignedTo      User?               @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  title           String
+  description     String?             @db.Text
+  priority        TaskPriority        @default(MEDIUM)
+  status          TaskStatus          @default(TODO)
+  dueDate         DateTime?
+  orderIndex      Int                 @default(0)
+
+  dependencies    TaskDependency[]    @relation("TaskPredecessors")
+  prerequisites   TaskDependency[]    @relation("TaskSuccessors")
+  comments        TaskComment[]
+  attachments     TaskAttachment[]
+  statusHistory   TaskStatusHistory[]
+  files           File[]
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([projectId])
+  @@index([milestoneId])
+  @@index([assignedToId])
+  @@index([status])
+}
+
+model TaskDependency {
+  id                String    @id @default(cuid())
+  taskId            String
+  dependsOnTaskId   String
+
+  task              Task      @relation("TaskPredecessors", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask     Task      @relation("TaskSuccessors", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([taskId])
+  @@index([dependsOnTaskId])
+}
+
+model TaskComment {
+  id          String    @id @default(cuid())
+  taskId      String
+  authorId    String
+  content     String    @db.Text
+
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([taskId])
+  @@index([authorId])
+}
+
+model TaskAttachment {
+  id          String    @id @default(cuid())
+  taskId      String
+  fileId      String
+
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  file        File      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+
+  @@unique([taskId, fileId])
+  @@index([taskId])
+  @@index([fileId])
+}
+
+model TaskStatusHistory {
+  id          String      @id @default(cuid())
+  taskId      String
+  changedById String
+  fromStatus  TaskStatus
+  toStatus    TaskStatus
+
+  task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  changedBy   User        @relation(fields: [changedById], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime    @default(now())
+
+  @@index([taskId])
+}
+
+// ------------------------------------------------------------------------------
+// 8. DELIVERABLE SYSTEM & VERSIONING
+// ------------------------------------------------------------------------------
+
+model Deliverable {
+  id                    String                @id @default(cuid())
+  projectId             String
+  project               Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId           String?
+  milestone             Milestone?            @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+
+  title                 String
+  description           String?               @db.Text
+  status                DeliverableStatus     @default(PENDING)
+  currentVersionNumber  Int                   @default(1)
+
+  versions              DeliverableVersion[]
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([projectId])
+  @@index([milestoneId])
+  @@index([status])
+}
+
+model DeliverableVersion {
+  id              String                @id @default(cuid())
+  deliverableId   String
+  deliverable     Deliverable           @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  fileId          String
+  file            File                  @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  submittedById   String
+  submittedBy     User                  @relation("VersionSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  changelog       String?               @db.Text
+
+  reviews         DeliverableReview[]
+
+  createdAt       DateTime              @default(now())
+
+  @@unique([deliverableId, versionNumber])
+  @@index([deliverableId])
+  @@index([fileId])
+}
+
+model DeliverableReview {
+  id            String              @id @default(cuid())
+  versionId     String
+  version       DeliverableVersion  @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  reviewerId    String
+  reviewer      User                @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Restrict)
+  decision      ReviewDecision
+  feedbackText  String              @db.Text
+
+  createdAt     DateTime            @default(now())
+
+  @@index([versionId])
+  @@index([reviewerId])
+}
+
+// ------------------------------------------------------------------------------
+// 9. CENTRALIZED FILE ENTITY
+// ------------------------------------------------------------------------------
+
+model File {
+  id                    String                @id @default(cuid())
+  storageKey            String                @unique // S3 / R2 object key
+  fileName              String
+  mimeType              String
+  fileSize              BigInt
+  uploadedById          String
+  uploadedBy            User                  @relation("UserUploadedFiles", fields: [uploadedById], references: [id], onDelete: Restrict)
+  projectId             String?
+  project               Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  taskId                String?
+  task                  Task?                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  isPublic              Boolean               @default(false)
+
+  // Reverse Relations
+  portfolioCovers       PortfolioItem[]       @relation("PortfolioCoverFile")
+  deliverableVersions   DeliverableVersion[]
+  taskAttachments       TaskAttachment[]
+  messageAttachments    MessageAttachment[]
+  disputeMessages       DisputeMessage[]
+
+  createdAt             DateTime              @default(now())
+
+  @@index([storageKey])
+  @@index([uploadedById])
+  @@index([projectId])
+}
+
+// ------------------------------------------------------------------------------
+// 10. COMMUNICATIONS (MESSAGING & CONVERSATIONS)
+// ------------------------------------------------------------------------------
+
+model Conversation {
+  id          String                @id @default(cuid())
+  type        ConversationType      @default(DIRECT)
+  title       String?               // Optional for group/project conversations
+
+  members     ConversationMember[]
+  messages    Message[]
+
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+}
+
+model ConversationMember {
+  id              String        @id @default(cuid())
+  conversationId  String
+  userId          String
+  lastReadAt      DateTime?
+
+  conversation    Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt        DateTime      @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model Message {
+  id              String              @id @default(cuid())
+  conversationId  String
+  senderId        String
+  content         String              @db.Text
+  isEdited        Boolean             @default(false)
+
+  conversation    Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User                @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  attachments     MessageAttachment[]
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+model MessageAttachment {
+  id          String    @id @default(cuid())
+  messageId   String
+  fileId      String
+
+  message     Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  file        File      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, fileId])
+  @@index([messageId])
+  @@index([fileId])
+}
+
+// ------------------------------------------------------------------------------
+// 11. NOTIFICATIONS
+// ------------------------------------------------------------------------------
+
+model Notification {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  title       String
+  body        String            @db.Text
+  linkUrl     String?
+  isRead      Boolean           @default(false)
+  readAt      DateTime?
+
+  createdAt   DateTime          @default(now())
+
+  @@index([userId, isRead])
+}
+
+model NotificationPreference {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  emailMilestones     Boolean   @default(true)
+  emailDeliverables   Boolean   @default(true)
+  emailMessages       Boolean   @default(true)
+  emailMarketing      Boolean   @default(false)
+  pushEnabled         Boolean   @default(true)
+  inAppEnabled        Boolean   @default(true)
+
+  updatedAt           DateTime  @updatedAt
+}
+
+// ------------------------------------------------------------------------------
+// 12. MILESTONES, ACCOUNTING & ESCROW PAYMENTS
+// ------------------------------------------------------------------------------
+
+model Milestone {
+  id            String            @id @default(cuid())
+  projectId     String
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  title         String
+  description   String?           @db.Text
+  amount        Decimal           @db.Decimal(10, 2)
+  dueDate       DateTime?
+  status        MilestoneStatus   @default(PENDING)
+
+  tasks         Task[]
+  deliverables  Deliverable[]
+  payments      MilestonePayment[]
+  disputes      Dispute[]
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model MilestonePayment {
+  id            String                  @id @default(cuid())
+  milestoneId   String
+  milestone     Milestone               @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  amount        Decimal                 @db.Decimal(10, 2)
+  currency      String                  @default("INR")
+  status        MilestonePaymentStatus  @default(PENDING)
+  escrowHeldAt  DateTime?
+  releasedAt    DateTime?
+
+  transactions  PaymentTransaction[]
+  refunds       Refund[]
+
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  @@index([milestoneId])
+  @@index([status])
+}
+
+model PaymentTransaction {
+  id                  String              @id @default(cuid())
+  milestonePaymentId  String?
+  milestonePayment    MilestonePayment?   @relation(fields: [milestonePaymentId], references: [id], onDelete: SetNull)
+
+  gatewayProvider     String              @default("RAZORPAY")
+  gatewayPaymentId    String?             @unique
+  gatewayOrderId      String?             @unique
+  amount              Decimal             @db.Decimal(10, 2)
+  currency            String              @default("INR")
+  status              PaymentStatus       @default(PENDING)
+
+  platformFees        PlatformFee[]
+
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([gatewayPaymentId])
+  @@index([gatewayOrderId])
+  @@index([status])
+}
+
+model Refund {
+  id                  String            @id @default(cuid())
+  milestonePaymentId  String
+  milestonePayment    MilestonePayment  @relation(fields: [milestonePaymentId], references: [id], onDelete: Restrict)
+
+  amount              Decimal           @db.Decimal(10, 2)
+  currency            String            @default("INR")
+  reason              String            @db.Text
+  gatewayRefundId     String?           @unique
+  status              PaymentStatus     @default(PENDING)
+
+  createdAt           DateTime          @default(now())
+
+  @@index([milestonePaymentId])
+}
+
+model Payout {
+  id              String        @id @default(cuid())
+  recipientId     String
+  recipient       User          @relation("UserPayouts", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("INR")
+  status          PayoutStatus  @default(PENDING)
+  payoutReference String?       @unique
+  processedAt     DateTime?
+
+  createdAt       DateTime      @default(now())
+
+  @@index([recipientId])
+  @@index([status])
+}
+
+model PlatformFee {
+  id              String              @id @default(cuid())
+  transactionId   String
+  transaction     PaymentTransaction  @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  amount          Decimal             @db.Decimal(10, 2)
+  feePercentage   Decimal             @db.Decimal(5, 2)
+  currency        String              @default("INR")
+
+  createdAt       DateTime            @default(now())
+
+  @@index([transactionId])
+}
+
+model Invoice {
+  id            String          @id @default(cuid())
+  businessId    String
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  recipientId   String
+  recipient     User            @relation("InvoiceRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  invoiceNumber String          @unique
+  totalAmount   Decimal         @db.Decimal(10, 2)
+  taxAmount     Decimal         @default(0.0) @db.Decimal(10, 2)
+  currency      String          @default("INR")
+  status        InvoiceStatus   @default(ISSUED)
+  pdfFileKey    String?
+  dueDate       DateTime?
+  paidAt        DateTime?
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([businessId])
+  @@index([invoiceNumber])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  gatewayEventId String   @unique
+  provider      String    @default("RAZORPAY")
+  eventType     String
+  payloadJson   String    @db.Text
+  isProcessed   Boolean   @default(false)
+  processedAt   DateTime?
+
+  createdAt     DateTime  @default(now())
+
+  @@index([gatewayEventId])
+  @@index([isProcessed])
+}
+
+// ------------------------------------------------------------------------------
+// 13. TWO-SIDED REVIEWS
+// ------------------------------------------------------------------------------
+
+model Review {
+  id                  String    @id @default(cuid())
+  projectId           String
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  authorId            String
+  author              User      @relation("ReviewsWritten", fields: [authorId], references: [id], onDelete: Cascade)
+  targetId            String
+  target              User      @relation("ReviewsReceived", fields: [targetId], references: [id], onDelete: Cascade)
+
+  ratingOverall       Int       // 1-5
+  ratingCommunication Int       @default(5)
+  ratingQuality       Int       @default(5)
+  ratingTimeliness    Int       @default(5)
+  comment             String    @db.Text
+
+  createdAt           DateTime  @default(now())
+
+  @@index([projectId])
+  @@index([authorId])
+  @@index([targetId])
+}
+
+// ------------------------------------------------------------------------------
+// 14. FORMAL CONTRACTS
+// ------------------------------------------------------------------------------
+
+model Contract {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  businessId  String
+  business    Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  title       String
+  termsText   String          @db.Text
+  totalAmount Decimal         @db.Decimal(10, 2)
+  status      ContractStatus  @default(DRAFT)
+
+  parties     ContractParty[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([projectId])
+  @@index([businessId])
+}
+
+model ContractParty {
+  id          String    @id @default(cuid())
+  contractId  String
+  contract    Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  role        String    // "CLIENT_SIGNER", "FREELANCER_SIGNER"
+  signedAt    DateTime?
+  ipAddress   String?
+
+  @@unique([contractId, userId])
+  @@index([contractId])
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------------------
+// 15. DISPUTES & MEDIATION
+// ------------------------------------------------------------------------------
+
+model Dispute {
+  id              String            @id @default(cuid())
+  projectId       String
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId     String?
+  milestone       Milestone?        @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  initiatorId     String
+  initiator       User              @relation("DisputeInitiator", fields: [initiatorId], references: [id], onDelete: Restrict)
+  respondentId    String
+  respondent      User              @relation("DisputeRespondent", fields: [respondentId], references: [id], onDelete: Restrict)
+
+  reason          String            @db.Text
+  status          DisputeStatus     @default(OPEN)
+  resolution      String?           @db.Text
+
+  messages        DisputeMessage[]
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([projectId])
+  @@index([milestoneId])
+  @@index([status])
+}
+
+model DisputeMessage {
+  id                String    @id @default(cuid())
+  disputeId         String
+  dispute           Dispute   @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  senderId          String
+  sender            User      @relation(fields: [senderId], references: [id], onDelete: Restrict)
+
+  content           String    @db.Text
+  attachmentFileId  String?
+  attachmentFile    File?     @relation(fields: [attachmentFileId], references: [id], onDelete: SetNull)
+
+  createdAt         DateTime  @default(now())
+
+  @@index([disputeId])
+}
+
+// ------------------------------------------------------------------------------
+// 16. ACTIVITY & AUDIT LOGGING
+// ------------------------------------------------------------------------------
+
+model ActivityLog {
+  id            String    @id @default(cuid())
+  entityType    String    // "PROJECT", "MILESTONE", "DELIVERABLE", "PAYMENT", "CONTRACT"
+  entityId      String
+  action        String    // "STATUS_CHANGED", "ESCROW_LOCKED", "ESCROW_RELEASED", etc.
+  actorId       String?
+  actor         User?     @relation("ActorActivity", fields: [actorId], references: [id], onDelete: SetNull)
+  metadataJson  String?   @db.Text
+  ipAddress     String?
+
+  createdAt     DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}

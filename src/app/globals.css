@@ -1,1 +1,149 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #fafaf9;
+  --foreground: #090a0f;
+  --card: #ffffff;
+  --card-foreground: #090a0f;
+  --popover: #ffffff;
+  --popover-foreground: #090a0f;
+  --primary: #090a0f;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #64748b;
+  --accent: #f4f4f5;
+  --accent-foreground: #090a0f;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #090a0f;
+
+  /* Pastel tokens */
+  --pastel-pink: #f472b6;
+  --pastel-pink-subtle: #fdf2f8;
+  --pastel-pink-border: #fbcfe8;
+  --pastel-yellow: #facc15;
+  --pastel-yellow-subtle: #fefce8;
+  --pastel-yellow-border: #fef08a;
+  --pastel-green: #34d399;
+  --pastel-green-subtle: #f0fdf4;
+  --pastel-green-border: #bbf7d0;
+  --pastel-blue: #60a5fa;
+  --pastel-blue-subtle: #eff6ff;
+  --pastel-blue-border: #bfdbfe;
+}
+
+.dark {
+  --background: #090a0c;
+  --foreground: #f4f4f6;
+  --card: #111317;
+  --card-foreground: #f4f4f6;
+  --popover: #111317;
+  --popover-foreground: #f4f4f6;
+  --primary: #ffffff;
+  --primary-foreground: #090a0c;
+  --secondary: #181b22;
+  --secondary-foreground: #f4f4f6;
+  --muted: #161920;
+  --muted-foreground: #94a3b8;
+  --accent: #1e222b;
+  --accent-foreground: #f4f4f6;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #222631;
+  --input: #222631;
+  --ring: #f4f4f6;
+
+  /* Dark mode pastel variants - sophisticated soft saturation */
+  --pastel-pink: #f472b6;
+  --pastel-pink-subtle: rgba(244, 114, 182, 0.12);
+  --pastel-pink-border: rgba(244, 114, 182, 0.25);
+  --pastel-yellow: #facc15;
+  --pastel-yellow-subtle: rgba(250, 204, 21, 0.12);
+  --pastel-yellow-border: rgba(250, 204, 21, 0.25);
+  --pastel-green: #34d399;
+  --pastel-green-subtle: rgba(52, 211, 153, 0.12);
+  --pastel-green-border: rgba(52, 211, 153, 0.25);
+  --pastel-blue: #60a5fa;
+  --pastel-blue-subtle: rgba(96, 165, 250, 0.12);
+  --pastel-blue-border: rgba(96, 165, 250, 0.25);
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-pastel-pink: var(--pastel-pink);
+  --color-pastel-pink-subtle: var(--pastel-pink-subtle);
+  --color-pastel-pink-border: var(--pastel-pink-border);
+  
+  --color-pastel-yellow: var(--pastel-yellow);
+  --color-pastel-yellow-subtle: var(--pastel-yellow-subtle);
+  --color-pastel-yellow-border: var(--pastel-yellow-border);
+
+  --color-pastel-green: var(--pastel-green);
+  --color-pastel-green-subtle: var(--pastel-green-subtle);
+  --color-pastel-green-border: var(--pastel-green-border);
+
+  --color-pastel-blue: var(--pastel-blue);
+  --color-pastel-blue-subtle: var(--pastel-blue-subtle);
+  --color-pastel-blue-border: var(--pastel-blue-border);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  min-height: 100vh;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Subtle custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 130, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 130, 0.45);
+}
