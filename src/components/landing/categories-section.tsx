@@ -46,7 +46,7 @@ export function CategoriesSection() {
             </p>
           </div>
 
-          <Link href="/register?role=business">
+          <Link href="/marketplace">
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:text-foreground/80 transition-colors cursor-pointer border-b border-border pb-0.5">
               Browse All Verified Disciplines
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -57,9 +57,10 @@ export function CategoriesSection() {
         {/* Categories Grid */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {TALENT_CATEGORIES.map((cat) => (
-            <div
+            <Link
               key={cat.id}
-              className="group relative flex flex-col justify-between rounded-2xl border border-border bg-card p-6 shadow-xs transition-all duration-200 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-md"
+              href={`/marketplace?category=${encodeURIComponent(cat.slug)}`}
+              className="group relative flex flex-col justify-between rounded-2xl border border-border bg-card p-6 shadow-xs transition-all duration-200 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-md cursor-pointer"
             >
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -92,7 +93,7 @@ export function CategoriesSection() {
                   ))}
                 </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
 

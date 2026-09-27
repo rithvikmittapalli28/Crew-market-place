@@ -26,7 +26,7 @@ export function FeaturedCreatorsSection() {
             </p>
           </div>
 
-          <Link href="/register?role=business">
+          <Link href="/marketplace">
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:text-foreground/80 transition-colors cursor-pointer border-b border-border pb-0.5">
               Explore All 14,800+ Creators
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -124,9 +124,9 @@ export function FeaturedCreatorsSection() {
                       </p>
                     </div>
 
-                    <Link href="/register?role=business">
+                    <Link href={`/marketplace?q=${encodeURIComponent(creator.name)}`}>
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-foreground hover:text-foreground/80 transition-colors">
-                        View Reel
+                        View Profile
                         <ArrowUpRight className="h-3 w-3" />
                       </span>
                     </Link>

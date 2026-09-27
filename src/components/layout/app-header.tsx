@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import { useAuth } from "@/context/auth-context";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +18,8 @@ import {
   ShieldAlert,
   ArrowLeft,
   LogOut,
+  Wallet,
+  FileText,
 } from "lucide-react";
 
 export function AppHeader({ title, subtitle }: { title: string; subtitle?: string }) {
@@ -38,10 +41,16 @@ export function AppHeader({ title, subtitle }: { title: string; subtitle?: strin
 
     const routes = [];
     if (user.role === "BUSINESS" || user.role === "ADMIN") {
-      routes.push({ name: "Business", href: "/business", icon: Building2 });
+      routes.push(
+        { name: "Business", href: "/business", icon: Building2 },
+        { name: "Invoices", href: "/business/invoices", icon: FileText }
+      );
     }
     if (user.role === "FREELANCER" || user.role === "ADMIN") {
-      routes.push({ name: "Freelancer", href: "/freelancer", icon: Sparkles });
+      routes.push(
+        { name: "Freelancer", href: "/freelancer", icon: Sparkles },
+        { name: "Earnings", href: "/freelancer/earnings", icon: Wallet }
+      );
     }
     routes.push(
       { name: "Marketplace", href: "/marketplace", icon: Search },
@@ -81,7 +90,8 @@ export function AppHeader({ title, subtitle }: { title: string; subtitle?: strin
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {user && <NotificationBell />}
             <ThemeToggle />
 
             {user ? (

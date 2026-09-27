@@ -60,16 +60,20 @@ export async function createSession(params: {
     },
   });
 
-  // 3. Set secure HTTP-only cookie with the raw opaque token
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE_NAME, rawToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: ABSOLUTE_SESSION_MAX_AGE_SECONDS,
-    expires: expiresAt,
-  });
+  // 3. Set secure HTTP-only cookie with the raw opaque token if in request scope
+  try {
+    const cookieStore = await cookies();
+    cookieStore.set(SESSION_COOKIE_NAME, rawToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: ABSOLUTE_SESSION_MAX_AGE_SECONDS,
+      expires: expiresAt,
+    });
+  } catch {
+    // Non-request context (e.g. testing / background jobs)
+  }
 
   return { token: rawToken, expiresAt, sessionId: sessionRecord.id };
 }
@@ -146,6 +150,11 @@ export async function getSessionRecord(): Promise<SessionWithUser | null> {
     console.error("Error in getSessionRecord:", error);
     return null;
   }
+}
+
+export async function getCurrentUser(): Promise<User | null> {
+  const session = await getSessionRecord();
+  return session ? session.user : null;
 }
 
 /**

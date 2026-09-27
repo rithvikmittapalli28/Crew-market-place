@@ -10,16 +10,17 @@ import { Menu, X, ArrowUpRight, Sparkles } from "lucide-react";
 import { useAuth } from "@/context/auth-context";
 
 const NAV_LINKS = [
-  { name: "Explore Talent", href: "#featured-creators" },
-  { name: "Categories", href: "#talent-categories" },
-  { name: "How It Works", href: "#how-it-works" },
-  { name: "Workspace", href: "#workspace-preview" },
+  { name: "Marketplace", href: "/marketplace" },
+  { name: "Featured", href: "/#featured-creators" },
+  { name: "Disciplines", href: "/#talent-categories" },
+  { name: "How It Works", href: "/#how-it-works" },
+  { name: "Workspace", href: "/#workspace-preview" },
 ];
 
 export function Navbar() {
   const [isScrolled, setIsScrolled] = React.useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -74,6 +75,22 @@ export function Navbar() {
                   {link.name}
                 </Link>
               ))}
+              {user && (
+                <>
+                  <Link
+                    href="/projects"
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/50"
+                  >
+                    Projects
+                  </Link>
+                  <Link
+                    href="/messages"
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/50"
+                  >
+                    Messages
+                  </Link>
+                </>
+              )}
             </nav>
           </div>
 
@@ -167,24 +184,52 @@ export function Navbar() {
             </div>
 
             <div className="space-y-3 pt-6 border-t border-border">
-              <Link
-                href="/login"
-                onClick={() => setMobileMenuOpen(false)}
-                className="block w-full"
-              >
-                <Button variant="outline" size="lg" className="w-full">
-                  Sign In
-                </Button>
-              </Link>
-              <Link
-                href="/register"
-                onClick={() => setMobileMenuOpen(false)}
-                className="block w-full"
-              >
-                <Button variant="default" size="lg" className="w-full">
-                  Join Crewn Platform
-                </Button>
-              </Link>
+              {user ? (
+                <>
+                  <Link
+                    href={dashboardHref}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="block w-full"
+                  >
+                    <Button variant="default" size="lg" className="w-full gap-2">
+                      <span>Open Workspace</span>
+                      <ArrowUpRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="w-full"
+                    onClick={async () => {
+                      setMobileMenuOpen(false);
+                      await logout();
+                    }}
+                  >
+                    Sign Out
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="block w-full"
+                  >
+                    <Button variant="outline" size="lg" className="w-full">
+                      Sign In
+                    </Button>
+                  </Link>
+                  <Link
+                    href="/register"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="block w-full"
+                  >
+                    <Button variant="default" size="lg" className="w-full">
+                      Join Crewn Platform
+                    </Button>
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

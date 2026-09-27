@@ -5,31 +5,85 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Briefcase, Building2, Globe } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Building2,
+  Globe,
+  Bookmark,
+  Mail,
+  ArrowRight,
+  Sparkles,
+  ExternalLink,
+} from "lucide-react";
 import Link from "next/link";
 
 export default async function BusinessDashboardPage() {
   const user = await requireBusinessOwner();
 
-  const business = await prisma.business.findUnique({
-    where: { id: user.businessId },
-    include: {
-      members: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              avatarUrl: true,
-              role: true,
+  const [business, savedCreators, sentInquiries] = await Promise.all([
+    prisma.business.findUnique({
+      where: { id: user.businessId },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+                role: true,
+              },
+            },
+          },
+        },
+        projects: true,
+      },
+    }),
+    prisma.savedCreator.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        freelancer: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                avatarUrl: true,
+                isVerified: true,
+              },
+            },
+            skills: {
+              take: 3,
+              include: { skill: true },
             },
           },
         },
       },
-      projects: true,
-    },
-  });
+    }),
+    prisma.creatorInquiry.findMany({
+      where: { senderId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        freelancer: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+        service: {
+          select: {
+            title: true,
+            basePrice: true,
+          },
+        },
+      },
+    }),
+  ]);
 
   if (!business) {
     return (
@@ -56,7 +110,7 @@ export default async function BusinessDashboardPage() {
     <div className="min-h-screen bg-background">
       <AppHeader
         title={`${business.name} — Workspace`}
-        subtitle="Manage organization members, campaign briefs, multi-creator contracts, and escrow milestones"
+        subtitle="Manage saved creator rosters, direct inquiries, organization members, and campaign briefs"
       />
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
@@ -98,6 +152,12 @@ export default async function BusinessDashboardPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/marketplace">
+              <Button variant="default" size="sm" className="gap-1.5 text-xs">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Discover Creators</span>
+              </Button>
+            </Link>
             <Link href="/settings">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs">
                 <span>Manage Organization</span>
@@ -108,6 +168,30 @@ export default async function BusinessDashboardPage() {
 
         {/* Top Metric Cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription className="text-xs">Saved Creators</CardDescription>
+              <CardTitle className="text-2xl font-mono">{savedCreators.length}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Badge variant="pastel-blue" size="sm">
+                Roster Bookmarks
+              </Badge>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription className="text-xs">Active Inquiries</CardDescription>
+              <CardTitle className="text-2xl font-mono">{sentInquiries.length}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Badge variant="pastel-yellow" size="sm">
+                Project Discussions
+              </Badge>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="text-xs">Active Projects</CardDescription>
@@ -122,50 +206,187 @@ export default async function BusinessDashboardPage() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription className="text-xs">Organization Team Seats</CardDescription>
-              <CardTitle className="text-2xl font-mono">{memberCount} / 5</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Badge variant="pastel-blue" size="sm">
-                Owner Seat Active
-              </Badge>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="text-xs">Escrow In Hold</CardDescription>
-              <CardTitle className="text-2xl font-mono">₹0</CardTitle>
+              <CardDescription className="text-xs">Team Members</CardDescription>
+              <CardTitle className="text-2xl font-mono">{memberCount} Seats</CardTitle>
             </CardHeader>
             <CardContent>
               <Badge variant="pastel-green" size="sm">
-                Milestone Accounting Ready
-              </Badge>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription className="text-xs">Deliverables In Review</CardDescription>
-              <CardTitle className="text-2xl font-mono">0</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Badge variant="secondary" size="sm">
-                No pending reviews
+                Active Organization
               </Badge>
             </CardContent>
           </Card>
         </div>
 
-        {/* Active Members Section */}
+        {/* Saved Creators Roster */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-foreground">Organization Members</h2>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                <Bookmark className="h-4 w-4 text-primary" />
+                Saved Talent Roster
+              </h2>
               <p className="text-xs text-muted-foreground">
-                Colleagues with collaborative access to campaign briefs and milestone releases.
+                Bookmarked creative directors, cinematographers, and specialists for upcoming campaigns.
               </p>
             </div>
+            <Link href="/marketplace">
+              <Button variant="ghost" size="sm" className="text-xs gap-1">
+                Browse Marketplace
+                <ArrowRight className="h-3 w-3" />
+              </Button>
+            </Link>
+          </div>
+
+          {savedCreators.length === 0 ? (
+            <Card>
+              <CardContent className="py-8">
+                <EmptyState
+                  icon={<Bookmark className="h-6 w-6 text-muted-foreground" />}
+                  title="No saved creators yet"
+                  description="Explore our verified creator directory to bookmark standout talent and build your commercial roster."
+                  action={
+                    <Link href="/marketplace">
+                      <Button variant="default" size="sm">
+                        Explore Talent Directory
+                      </Button>
+                    </Link>
+                  }
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {savedCreators.map((item) => {
+                const freelancer = item.freelancer;
+                const slugOrId = freelancer.publicSlug || freelancer.id;
+                return (
+                  <Card key={item.id} className="p-5 border border-border bg-card flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-10 w-10 border border-border">
+                          {freelancer.user.avatarUrl && (
+                            <AvatarImage src={freelancer.user.avatarUrl} alt={freelancer.user.name || "Creator"} />
+                          )}
+                          <AvatarFallback className="text-xs font-bold">
+                            {(freelancer.user.name || "CR")[0]}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-semibold text-xs text-foreground truncate">
+                            {freelancer.user.name}
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {freelancer.headline}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1">
+                        {freelancer.skills.map((s) => (
+                          <Badge key={s.skill.name} variant="secondary" size="sm" className="text-[10px]">
+                            {s.skill.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 mt-3 border-t border-border flex items-center justify-between">
+                      <span className="text-xs font-mono font-bold text-foreground">
+                        {freelancer.hourlyRate ? `₹${Number(freelancer.hourlyRate).toLocaleString()}/hr` : "Inquire"}
+                      </span>
+                      <Link href={`/creators/${slugOrId}`}>
+                        <Button variant="outline" size="sm" className="text-xs h-7 gap-1">
+                          View Profile
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Project Inquiries Section */}
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+              <Mail className="h-4 w-4 text-primary" />
+              Creator Inquiries
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Direct briefs and scope inquiries initiated with creative talent.
+            </p>
+          </div>
+
+          {sentInquiries.length === 0 ? (
+            <Card>
+              <CardContent className="py-8">
+                <EmptyState
+                  icon={<Mail className="h-6 w-6 text-muted-foreground" />}
+                  title="No active inquiries"
+                  description="When you reach out to creators through their profile or service packages, status updates will appear here."
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {sentInquiries.map((inq) => (
+                <Card key={inq.id} className="p-4 border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-semibold text-xs text-foreground">
+                        To: {inq.freelancer.user.name}
+                      </h4>
+                      {inq.service && (
+                        <Badge variant="outline" size="sm" className="text-[10px]">
+                          Package: {inq.service.title} (₹{Number(inq.service.basePrice).toLocaleString()})
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-1">
+                      &ldquo;{inq.message}&rdquo;
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Sent {new Date(inq.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <Badge
+                      variant={
+                        inq.status === "ACCEPTED"
+                          ? "pastel-green"
+                          : inq.status === "PENDING"
+                          ? "pastel-yellow"
+                          : inq.status === "DECLINED"
+                          ? "warning"
+                          : "secondary"
+                      }
+                      size="sm"
+                    >
+                      {inq.status}
+                    </Badge>
+                    <Link href={`/creators/${inq.freelancer.publicSlug || inq.freelancer.id}`}>
+                      <Button variant="ghost" size="sm" className="text-xs h-7">
+                        Profile
+                      </Button>
+                    </Link>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Organization Members Section */}
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-foreground">Organization Members</h2>
+            <p className="text-xs text-muted-foreground">
+              Colleagues with collaborative access to campaign briefs and milestone releases.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -189,46 +410,6 @@ export default async function BusinessDashboardPage() {
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Campaign Briefs Section */}
-        <div className="space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-foreground">Campaign Briefs & Workspaces</h2>
-            <p className="text-xs text-muted-foreground">
-              Production projects configured with structured milestones, task dependencies, and escrow.
-            </p>
-          </div>
-
-          {projectCount === 0 ? (
-            <Card>
-              <CardContent className="py-12">
-                <EmptyState
-                  icon={<Briefcase className="h-6 w-6" />}
-                  title="No active campaign briefs yet"
-                  description="When you create production briefs in Phase 3, you can assemble multi-creator teams, fund escrow milestones, and review submitted 4K deliverables."
-                  action={
-                    <Link href="/marketplace">
-                      <Button variant="default" size="sm">
-                        Explore Creator Marketplace
-                      </Button>
-                    </Link>
-                  }
-                />
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {business.projects.map((proj) => (
-                <Card key={proj.id}>
-                  <CardHeader>
-                    <CardTitle className="text-base">{proj.title}</CardTitle>
-                    <CardDescription className="text-xs">{proj.description}</CardDescription>
-                  </CardHeader>
-                </Card>
-              ))}
-            </div>
-          )}
         </div>
       </main>
     </div>

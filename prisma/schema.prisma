@@ -168,6 +168,20 @@ enum DisputeStatus {
   CANCELLED
 }
 
+enum PricingType {
+  FIXED
+  HOURLY
+  STARTING_FROM
+}
+
+enum InquiryStatus {
+  PENDING
+  RESPONDED
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
 // ------------------------------------------------------------------------------
 // 1. IDENTITY & USER
 // ------------------------------------------------------------------------------
@@ -226,6 +240,9 @@ model User {
   // Financial & Invoicing
   invoicesIssued        Invoice[]             @relation("InvoiceRecipient")
   payoutsReceived       Payout[]              @relation("UserPayouts")
+  milestonesAssigned    Milestone[]           @relation("MilestoneBeneficiary")
+  paymentsMade          PaymentTransaction[]  @relation("UserPayments")
+  bankAccount           BankAccount?
 
   // Reviews & Feedback
   reviewsGiven          Review[]              @relation("ReviewsWritten")
@@ -239,6 +256,10 @@ model User {
 
   // Activity Audit Log
   activityLogs          ActivityLog[]         @relation("ActorActivity")
+
+  // Marketplace & Creator Interactions
+  savedCreators         SavedCreator[]        @relation("UserSavedCreators")
+  sentInquiries         CreatorInquiry[]      @relation("SentInquiries")
 
   @@index([email])
   @@index([role])
@@ -333,34 +354,42 @@ model BusinessMember {
 // ------------------------------------------------------------------------------
 
 model FreelancerProfile {
-  id              String            @id @default(cuid())
-  userId          String            @unique
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String            @id @default(cuid())
+  userId              String            @unique
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  headline        String
-  bio             String            @db.Text
-  location        String?
-  hourlyRate      Decimal?          @db.Decimal(10, 2)
-  yearsExperience Int               @default(1)
-  isVerified      Boolean           @default(false)
-  rating          Decimal           @default(0.0) @db.Decimal(3, 2)
-  reviewCount     Int               @default(0)
-  website         String?
-  instagramUrl    String?
-  behanceUrl      String?
-  vimeoUrl        String?
+  publicSlug          String?           @unique
+  marketplaceVisible  Boolean           @default(true)
+  headline            String
+  bio                 String            @db.Text
+  location            String?
+  hourlyRate          Decimal?          @db.Decimal(10, 2)
+  yearsExperience     Int               @default(1)
+  isVerified          Boolean           @default(false)
+  rating              Decimal           @default(0.0) @db.Decimal(3, 2)
+  reviewCount         Int               @default(0)
+  website             String?
+  instagramUrl        String?
+  behanceUrl          String?
+  vimeoUrl            String?
 
-  availability    Availability?
-  services        Service[]
-  portfolioItems  PortfolioItem[]
-  categories      ProfileCategory[]
-  skills          ProfileSkill[]
+  availability        Availability?
+  services            Service[]
+  portfolioItems      PortfolioItem[]
+  categories          ProfileCategory[]
+  skills              ProfileSkill[]
+  savedBy             SavedCreator[]
+  inquiries           CreatorInquiry[]
 
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   @@index([userId])
   @@index([isVerified])
+  @@index([marketplaceVisible])
+  @@index([publicSlug])
+  @@index([hourlyRate])
+  @@index([yearsExperience])
 }
 
 model Availability {
@@ -383,14 +412,21 @@ model Service {
   description         String              @db.Text
   basePrice           Decimal             @db.Decimal(10, 2)
   currency            String              @default("INR")
+  pricingType         PricingType         @default(FIXED)
   deliveryDays        Int                 @default(7)
   revisionLimit       Int                 @default(2)
+  category            String?
+  imageUrl            String?
   isActive            Boolean             @default(true)
+
+  inquiries           CreatorInquiry[]
 
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
   @@index([freelancerProfileId])
+  @@index([isActive])
+  @@index([category])
 }
 
 model PortfolioItem {
@@ -400,11 +436,14 @@ model PortfolioItem {
 
   title               String
   description         String?             @db.Text
+  category            String?
   mediaType           MediaType           @default(IMAGE)
   externalUrl         String?
   coverFileId         String?
   coverFile           File?               @relation("PortfolioCoverFile", fields: [coverFileId], references: [id], onDelete: SetNull)
 
+  published           Boolean             @default(true)
+  displayOrder        Int                 @default(0)
   isFeatured          Boolean             @default(false)
   viewCount           Int                 @default(0)
 
@@ -412,6 +451,40 @@ model PortfolioItem {
   updatedAt           DateTime            @updatedAt
 
   @@index([freelancerProfileId])
+  @@index([coverFileId])
+  @@index([published])
+}
+
+model SavedCreator {
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation("UserSavedCreators", fields: [userId], references: [id], onDelete: Cascade)
+  freelancerId  String
+  freelancer    FreelancerProfile @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+  createdAt     DateTime          @default(now())
+
+  @@unique([userId, freelancerId])
+  @@index([userId])
+  @@index([freelancerId])
+}
+
+model CreatorInquiry {
+  id            String            @id @default(cuid())
+  senderId      String
+  sender        User              @relation("SentInquiries", fields: [senderId], references: [id], onDelete: Cascade)
+  freelancerId  String
+  freelancer    FreelancerProfile @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+  serviceId     String?
+  service       Service?          @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  message       String            @db.Text
+  status        InquiryStatus     @default(PENDING)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([senderId])
+  @@index([freelancerId])
+  @@index([serviceId])
+  @@index([status])
 }
 
 // ------------------------------------------------------------------------------
@@ -512,6 +585,7 @@ model TeamInvitation {
   role          TeamRole          @default(COLLABORATOR)
   status        InvitationStatus  @default(PENDING)
   token         String            @unique
+  tokenHash     String?
   expiresAt     DateTime
 
   team          Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -522,6 +596,7 @@ model TeamInvitation {
   @@index([teamId])
   @@index([inviteeEmail])
   @@index([token])
+  @@index([tokenHash])
 }
 
 // ------------------------------------------------------------------------------
@@ -589,6 +664,7 @@ model ProjectInvitation {
   role          ProjectMemberRole @default(FREELANCER)
   status        InvitationStatus  @default(PENDING)
   token         String            @unique
+  tokenHash     String?
   expiresAt     DateTime
 
   project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -599,6 +675,7 @@ model ProjectInvitation {
   @@index([projectId])
   @@index([inviteeEmail])
   @@index([token])
+  @@index([tokenHash])
 }
 
 model ProjectCategory {
@@ -714,6 +791,7 @@ model TaskStatusHistory {
   createdAt   DateTime    @default(now())
 
   @@index([taskId])
+  @@index([changedById])
 }
 
 // ------------------------------------------------------------------------------
@@ -760,6 +838,7 @@ model DeliverableVersion {
   @@unique([deliverableId, versionNumber])
   @@index([deliverableId])
   @@index([fileId])
+  @@index([submittedById])
 }
 
 model DeliverableReview {
@@ -793,6 +872,8 @@ model File {
   project               Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
   taskId                String?
   task                  Task?                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  resourceType          String?               // Ownership: PORTFOLIO_ITEM, PROFILE_AVATAR, SERVICE_IMAGE, PROJECT_FILE, etc.
+  resourceId            String?               // Ownership: ID of the owned resource
   isPublic              Boolean               @default(false)
 
   // Reverse Relations
@@ -807,6 +888,8 @@ model File {
   @@index([storageKey])
   @@index([uploadedById])
   @@index([projectId])
+  @@index([taskId])
+  @@index([resourceType, resourceId])
 }
 
 // ------------------------------------------------------------------------------
@@ -915,6 +998,8 @@ model Milestone {
   id            String            @id @default(cuid())
   projectId     String
   project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  freelancerId  String?
+  freelancer    User?             @relation("MilestoneBeneficiary", fields: [freelancerId], references: [id], onDelete: SetNull)
 
   title         String
   description   String?           @db.Text
@@ -931,6 +1016,7 @@ model Milestone {
   updatedAt     DateTime          @updatedAt
 
   @@index([projectId])
+  @@index([freelancerId])
   @@index([status])
 }
 
@@ -938,6 +1024,8 @@ model MilestonePayment {
   id            String                  @id @default(cuid())
   milestoneId   String
   milestone     Milestone               @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  projectId     String?
+  businessId    String?
   amount        Decimal                 @db.Decimal(10, 2)
   currency      String                  @default("INR")
   status        MilestonePaymentStatus  @default(PENDING)
@@ -946,11 +1034,14 @@ model MilestonePayment {
 
   transactions  PaymentTransaction[]
   refunds       Refund[]
+  payout        Payout?
 
   createdAt     DateTime                @default(now())
   updatedAt     DateTime                @updatedAt
 
   @@index([milestoneId])
+  @@index([projectId])
+  @@index([businessId])
   @@index([status])
 }
 
@@ -958,6 +1049,9 @@ model PaymentTransaction {
   id                  String              @id @default(cuid())
   milestonePaymentId  String?
   milestonePayment    MilestonePayment?   @relation(fields: [milestonePaymentId], references: [id], onDelete: SetNull)
+  businessId          String?
+  payerId             String?
+  payer               User?               @relation("UserPayments", fields: [payerId], references: [id], onDelete: SetNull)
 
   gatewayProvider     String              @default("RAZORPAY")
   gatewayPaymentId    String?             @unique
@@ -965,12 +1059,17 @@ model PaymentTransaction {
   amount              Decimal             @db.Decimal(10, 2)
   currency            String              @default("INR")
   status              PaymentStatus       @default(PENDING)
+  paymentMethod       String?             // "upi", "card", "netbanking"
+  rawResponseJson     String?             @db.Text
 
   platformFees        PlatformFee[]
 
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
+  @@index([milestonePaymentId])
+  @@index([businessId])
+  @@index([payerId])
   @@index([gatewayPaymentId])
   @@index([gatewayOrderId])
   @@index([status])
@@ -993,19 +1092,24 @@ model Refund {
 }
 
 model Payout {
-  id              String        @id @default(cuid())
-  recipientId     String
-  recipient       User          @relation("UserPayouts", fields: [recipientId], references: [id], onDelete: Restrict)
+  id                  String            @id @default(cuid())
+  recipientId         String
+  recipient           User              @relation("UserPayouts", fields: [recipientId], references: [id], onDelete: Restrict)
+  milestonePaymentId  String?           @unique
+  milestonePayment    MilestonePayment? @relation(fields: [milestonePaymentId], references: [id], onDelete: Restrict)
+  projectId           String?
+  payoutMethod        String            @default("BANK_TRANSFER") // "BANK_TRANSFER", "UPI"
 
-  amount          Decimal       @db.Decimal(10, 2)
-  currency        String        @default("INR")
-  status          PayoutStatus  @default(PENDING)
-  payoutReference String?       @unique
-  processedAt     DateTime?
+  amount              Decimal           @db.Decimal(10, 2)
+  currency            String            @default("INR")
+  status              PayoutStatus      @default(PENDING)
+  payoutReference     String?           @unique
+  processedAt         DateTime?
 
-  createdAt       DateTime      @default(now())
+  createdAt           DateTime          @default(now())
 
   @@index([recipientId])
+  @@index([projectId])
   @@index([status])
 }
 
@@ -1020,46 +1124,75 @@ model PlatformFee {
 
   createdAt       DateTime            @default(now())
 
+  @@unique([transactionId])
   @@index([transactionId])
 }
 
 model Invoice {
-  id            String          @id @default(cuid())
-  businessId    String
-  business      Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  recipientId   String
-  recipient     User            @relation("InvoiceRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  id                  String            @id @default(cuid())
+  businessId          String
+  business            Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  recipientId         String
+  recipient           User              @relation("InvoiceRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  projectId           String?
+  milestonePaymentId  String?
+  itemsJson           String?           @db.Text
 
-  invoiceNumber String          @unique
-  totalAmount   Decimal         @db.Decimal(10, 2)
-  taxAmount     Decimal         @default(0.0) @db.Decimal(10, 2)
-  currency      String          @default("INR")
-  status        InvoiceStatus   @default(ISSUED)
-  pdfFileKey    String?
-  dueDate       DateTime?
-  paidAt        DateTime?
+  invoiceNumber       String            @unique
+  totalAmount         Decimal           @db.Decimal(10, 2)
+  taxAmount           Decimal           @default(0.0) @db.Decimal(10, 2)
+  currency            String            @default("INR")
+  status              InvoiceStatus     @default(ISSUED)
+  pdfFileKey          String?
+  dueDate             DateTime?
+  paidAt              DateTime?
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   @@index([businessId])
+  @@index([recipientId])
+  @@index([projectId])
+  @@index([milestonePaymentId])
   @@index([invoiceNumber])
   @@index([status])
 }
 
 model WebhookEvent {
-  id            String    @id @default(cuid())
-  gatewayEventId String   @unique
-  provider      String    @default("RAZORPAY")
-  eventType     String
-  payloadJson   String    @db.Text
-  isProcessed   Boolean   @default(false)
-  processedAt   DateTime?
+  id                String    @id @default(cuid())
+  gatewayEventId    String    @unique
+  provider          String    @default("RAZORPAY")
+  eventType         String
+  payloadJson       String    @db.Text
+  isProcessed       Boolean   @default(false)
+  processingStatus  String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  processingError   String?   @db.Text
+  attempts          Int       @default(0)
+  processedAt       DateTime?
 
-  createdAt     DateTime  @default(now())
+  createdAt         DateTime  @default(now())
 
   @@index([gatewayEventId])
   @@index([isProcessed])
+}
+
+model BankAccount {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accountHolderName     String
+  accountNumberMasked   String    // e.g. "••••••••5678"
+  accountNumberEncrypted String   // AES-256-GCM encrypted
+  ifscCode              String
+  bankName              String?
+  upiId                 String?
+  isVerified            Boolean   @default(false)
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 // ------------------------------------------------------------------------------
@@ -1155,6 +1288,8 @@ model Dispute {
 
   @@index([projectId])
   @@index([milestoneId])
+  @@index([initiatorId])
+  @@index([respondentId])
   @@index([status])
 }
 
@@ -1172,6 +1307,8 @@ model DisputeMessage {
   createdAt         DateTime  @default(now())
 
   @@index([disputeId])
+  @@index([senderId])
+  @@index([attachmentFileId])
 }
 
 // ------------------------------------------------------------------------------
@@ -1180,6 +1317,7 @@ model DisputeMessage {
 
 model ActivityLog {
   id            String    @id @default(cuid())
+  projectId     String?
   entityType    String    // "PROJECT", "MILESTONE", "DELIVERABLE", "PAYMENT", "CONTRACT"
   entityId      String
   action        String    // "STATUS_CHANGED", "ESCROW_LOCKED", "ESCROW_RELEASED", etc.
@@ -1190,6 +1328,8 @@ model ActivityLog {
 
   createdAt     DateTime  @default(now())
 
+  @@index([projectId])
+  @@index([projectId, createdAt])
   @@index([entityType, entityId])
   @@index([actorId])
   @@index([createdAt])

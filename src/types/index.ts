@@ -96,6 +96,15 @@ export type DisputeStatus =
   | "RESOLVED"
   | "CANCELLED";
 
+export type PricingType = "FIXED" | "HOURLY" | "STARTING_FROM";
+
+export type InquiryStatus =
+  | "PENDING"
+  | "RESPONDED"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "CANCELLED";
+
 // ------------------------------------------------------------------------------
 // DOMAIN ENTITIES
 // ------------------------------------------------------------------------------
@@ -269,6 +278,8 @@ export interface FreelancerProfile {
   instagramUrl?: string | null;
   behanceUrl?: string | null;
   vimeoUrl?: string | null;
+  publicSlug?: string | null;
+  marketplaceVisible: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -287,10 +298,13 @@ export interface Service {
   freelancerProfileId: string;
   title: string;
   description: string;
+  category?: string | null;
   basePrice: number;
+  pricingType: PricingType;
   currency: string;
   deliveryDays: number;
   revisionLimit: number;
+  imageUrl?: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -301,13 +315,103 @@ export interface PortfolioItem {
   freelancerProfileId: string;
   title: string;
   description?: string | null;
+  category?: string | null;
   mediaType: MediaType;
   externalUrl?: string | null;
   coverFileId?: string | null;
   isFeatured: boolean;
+  published: boolean;
+  displayOrder: number;
   viewCount: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface SavedCreator {
+  id: string;
+  userId: string;
+  freelancerId: string;
+  createdAt: Date;
+}
+
+export interface CreatorInquiry {
+  id: string;
+  senderId: string;
+  freelancerId: string;
+  serviceId?: string | null;
+  message: string;
+  status: InquiryStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreatorPublicProfile {
+  id: string;
+  publicSlug: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  headline: string;
+  bio: string;
+  location: string | null;
+  yearsExperience: number;
+  hourlyRate: number | null;
+  isVerified: boolean;
+  rating: number;
+  reviewCount: number;
+  website?: string | null;
+  instagramUrl?: string | null;
+  behanceUrl?: string | null;
+  vimeoUrl?: string | null;
+  skills: Array<{ id: string; name: string; category?: string | null }>;
+  services: Array<{
+    id: string;
+    title: string;
+    description: string;
+    category?: string | null;
+    basePrice: number;
+    pricingType: PricingType;
+    currency: string;
+    deliveryDays: number;
+    revisionLimit: number;
+    imageUrl?: string | null;
+  }>;
+  portfolio: Array<{
+    id: string;
+    title: string;
+    description?: string | null;
+    category?: string | null;
+    mediaType: MediaType;
+    externalUrl?: string | null;
+    coverFileId?: string | null;
+    isFeatured: boolean;
+    displayOrder: number;
+    file?: {
+      id: string;
+      storageKey: string;
+      fileName: string;
+      mimeType: string;
+    } | null;
+  }>;
+  availability: {
+    status: AvailabilityStatus;
+    hoursPerWeek: number;
+    nextAvailableDate?: Date | null;
+  } | null;
+  completedProjectCount: number;
+}
+
+export interface MarketplaceFilterParams {
+  query?: string;
+  category?: string;
+  skill?: string;
+  availability?: AvailabilityStatus;
+  minPrice?: number;
+  maxPrice?: number;
+  minExperience?: number;
+  location?: string;
+  sort?: "recent" | "newest" | "price_asc" | "price_desc" | "experience";
+  cursor?: string;
+  limit?: number;
 }
 
 export interface Team {
@@ -515,4 +619,36 @@ export interface ActivityLog {
   metadataJson?: string | null;
   ipAddress?: string | null;
   createdAt: Date;
+}
+
+export interface FileRecord {
+  id: string;
+  storageKey: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedById: string;
+  resourceType?: string | null;
+  resourceId?: string | null;
+  projectId?: string | null;
+  taskId?: string | null;
+  isPublic: boolean;
+  createdAt: Date;
+}
+
+export interface StorageProvider {
+  createUploadUrl(
+    key: string,
+    mimeType: string,
+    maxSizeBytes?: number
+  ): Promise<{ uploadUrl: string; storageKey: string; expiresAt?: Date }>;
+  getFileUrl(key: string, isPublic?: boolean): Promise<string>;
+  getSignedUrl(
+    key: string,
+    expiresInSeconds?: number
+  ): Promise<{ url: string; expiresAt: Date }>;
+  deleteFile(key: string): Promise<boolean>;
+  getObjectMetadata(
+    key: string
+  ): Promise<{ size: number; mimeType: string; lastModified: Date } | null>;
 }

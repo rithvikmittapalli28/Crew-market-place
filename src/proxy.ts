@@ -7,11 +7,12 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   // Content Security Policy: Practical, safe for Next.js 16 app router hydration & inline styles
   const cspHeader = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://checkout.razorpay.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    "frame-src 'self' https://api.razorpay.com",
+    "connect-src 'self' https://lumberjack.razorpay.com https://api.razorpay.com",
     "frame-ancestors 'none'",
     "object-src 'none'",
     "base-uri 'self'",
@@ -23,7 +24,7 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), payment=()"
+    "camera=(), microphone=(), geolocation=(), payment=(self \"https://checkout.razorpay.com\")"
   );
 
   if (process.env.NODE_ENV === "production") {
@@ -56,7 +57,6 @@ export function proxy(request: NextRequest) {
     pathname.startsWith("/freelancer") ||
     pathname.startsWith("/admin") ||
     pathname.startsWith("/projects") ||
-    pathname.startsWith("/marketplace") ||
     pathname.startsWith("/messages") ||
     pathname.startsWith("/settings") ||
     pathname.startsWith("/onboarding");

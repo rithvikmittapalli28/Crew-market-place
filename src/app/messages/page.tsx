@@ -1,31 +1,39 @@
+import { Suspense } from "react";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth/session";
 import { AppHeader } from "@/components/layout/app-header";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Button } from "@/components/ui/button";
-import { MessageSquare, Users } from "lucide-react";
-import Link from "next/link";
+import { MessagingClient } from "@/components/messages/messaging-client";
+import { Loader2 } from "lucide-react";
 
-export default function MessagesPage() {
+export const metadata = {
+  title: "Communications Hub — Crewn",
+  description: "Direct client-creator messaging and dedicated project team collaboration channels.",
+};
+
+export default async function MessagesPage() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/login?from=/messages");
+  }
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <AppHeader
-        title="Direct Communications"
+        title="Communications Hub"
         subtitle="Campaign discussion channels, deliverable feedback, and direct client-creator chats"
       />
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <EmptyState
-          icon={<MessageSquare className="h-7 w-7 text-muted-foreground" />}
-          title="No open conversations"
-          description="In this foundation phase, messaging is intentionally un-mocked. Real-time project chats and milestone feedback threads will activate upon campaign initiation in Phase 2."
-          action={
-            <Link href="/marketplace">
-              <Button variant="default" size="sm" className="gap-1.5">
-                <Users className="h-3.5 w-3.5" />
-                <span>Find Creators to Message</span>
-              </Button>
-            </Link>
+      <main className="flex-1 mx-auto max-w-7xl w-full px-4 py-4 sm:px-6 lg:px-8">
+        <Suspense
+          fallback={
+            <div className="flex h-[calc(100vh-8.5rem)] items-center justify-center rounded-2xl border border-border bg-card/40">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            </div>
           }
-        />
+        >
+          <MessagingClient currentUserId={user.id} />
+        </Suspense>
       </main>
     </div>
   );

@@ -31,6 +31,9 @@ describe("Crewn Phase 2 — Real Authentication & Architectural Corrections Test
 
   before(async () => {
     // Ensure clean state for test domain
+    await prisma.file.deleteMany({
+      where: { uploadedBy: { email: { contains: "crewn-test.com" } } },
+    });
     await prisma.user.deleteMany({
       where: { email: { contains: "crewn-test.com" } },
     });
@@ -38,6 +41,9 @@ describe("Crewn Phase 2 — Real Authentication & Architectural Corrections Test
 
   after(async () => {
     // Clean up test domain users and associated cascaded data
+    await prisma.file.deleteMany({
+      where: { uploadedBy: { email: { contains: "crewn-test.com" } } },
+    });
     await prisma.user.deleteMany({
       where: { email: { contains: "crewn-test.com" } },
     });
