@@ -105,6 +105,88 @@ export interface FileValidationResult {
 }
 
 /**
+ * Rigorous SVG sanitization and validation.
+ * Scans the ENTIRE SVG buffer to prevent Stored XSS and XML entity exploits.
+ * Rejects scripts, dangerous tags, inline event handlers, XXE, and javascript: links.
+ */
+export function validateAndSanitizeSvg(buffer: Buffer): {
+  isValid: boolean;
+  sanitizedBuffer?: Buffer;
+  error?: string;
+} {
+  const fullText = buffer.toString("utf8");
+  const lowerText = fullText.toLowerCase();
+
+  // 1. Must contain <svg root element
+  if (!lowerText.includes("<svg")) {
+    return {
+      isValid: false,
+      error: "Declared SVG file does not contain valid SVG markup",
+    };
+  }
+
+  // 2. Reject XML External Entity (XXE) attacks
+  if (
+    lowerText.includes("<!entity") ||
+    (lowerText.includes("<!doctype") && lowerText.includes("system"))
+  ) {
+    return {
+      isValid: false,
+      error: "SVG contains prohibited XML external entity declarations (XXE)",
+    };
+  }
+
+  // 3. Prohibited executable script and embedded content elements
+  const prohibitedTags = [
+    "<script",
+    "</script>",
+    "<foreignobject",
+    "</foreignobject>",
+    "<iframe",
+    "<object",
+    "<embed",
+    "<applet",
+    "<meta",
+    "<link",
+  ];
+  for (const tag of prohibitedTags) {
+    if (lowerText.includes(tag)) {
+      return {
+        isValid: false,
+        error: `SVG file contains prohibited executable script or embedding tag: '${tag}'`,
+      };
+    }
+  }
+
+  // 4. Reject javascript:, vbscript:, and data:text/html URI schemes
+  if (
+    lowerText.includes("javascript:") ||
+    lowerText.includes("vbscript:") ||
+    lowerText.includes("data:text/html")
+  ) {
+    return {
+      isValid: false,
+      error: "SVG contains prohibited executable URI scheme",
+    };
+  }
+
+  // 5. Reject all inline event handlers (on[a-z]+\s*=) across the entire document
+  // e.g. onload=, onerror=, onclick=, onmouseover=, onfocus=, etc.
+  const inlineEventHandlerRegex = /\son[a-zA-Z]+\s*=/i;
+  if (inlineEventHandlerRegex.test(fullText)) {
+    return {
+      isValid: false,
+      error: "SVG contains prohibited inline event handler attributes (stored XSS risk)",
+    };
+  }
+
+  return {
+    isValid: true,
+    sanitizedBuffer: buffer,
+  };
+}
+
+/**
  * Validates both declared Content-Type and actual uploaded file characteristics
  * via magic bytes / file signatures to prevent file-type spoofing attacks.
  */
@@ -248,28 +330,16 @@ export function validateFileSignature(
     };
   }
 
-  // 8. SVG: XML text starting with <?xml or <svg, disallow script injection
+  // 8. SVG: Full-content inspection and sanitization across the entire file
   if (mime === "image/svg+xml") {
-    const textPrefix = buffer.slice(0, 2048).toString("utf8").trim().toLowerCase();
-    if (textPrefix.includes("<svg") || textPrefix.includes("<?xml")) {
-      // Disallow dangerous script tags or event handlers in SVG
-      if (
-        textPrefix.includes("<script") ||
-        textPrefix.includes("javascript:") ||
-        textPrefix.includes("onload=") ||
-        textPrefix.includes("onerror=")
-      ) {
-        return {
-          isValid: false,
-          error: "SVG file contains prohibited executable script or handler content",
-        };
-      }
-      return { isValid: true, detectedMimeType: "image/svg+xml" };
+    const svgResult = validateAndSanitizeSvg(buffer);
+    if (!svgResult.isValid) {
+      return {
+        isValid: false,
+        error: svgResult.error || "Prohibited content detected in SVG",
+      };
     }
-    return {
-      isValid: false,
-      error: "Declared SVG file does not have valid XML/SVG markup",
-    };
+    return { isValid: true, detectedMimeType: "image/svg+xml" };
   }
 
   // Fallback: If declared mime is not in allowed list or signature unknown

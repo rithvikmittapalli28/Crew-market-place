@@ -74,9 +74,13 @@ export async function POST(req: NextRequest) {
     const masked = `••••••••${lastFour}`;
 
     // Simple deterministic encryption / hash for safe persistence
-    const secret = process.env.AUTH_SECRET || "fallback_salt_crewn_secret";
+    const secret = process.env.AUTH_SECRET;
+    if (!secret && process.env.NODE_ENV === "production") {
+      throw new Error("AUTH_SECRET is required in production for bank account encryption.");
+    }
+    const encryptionSecret = secret || "dev_salt_crewn_secret";
     const encrypted = crypto
-      .createHmac("sha256", secret)
+      .createHmac("sha256", encryptionSecret)
       .update(cleanAccount)
       .digest("hex");
 

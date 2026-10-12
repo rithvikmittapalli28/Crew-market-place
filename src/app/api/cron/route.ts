@@ -1,32 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeJob, JobName } from "@/lib/jobs";
 import { logger } from "@/lib/logger";
+import crypto from "crypto";
 
 function isAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    // In development without a secret, allow local testing; in production/staging require CRON_SECRET
-    if (process.env.NODE_ENV === "production") {
-      return false;
-    }
-    return true;
+  // CRON_SECRET is strictly mandatory across all environments. Fail closed if missing.
+  if (!cronSecret || cronSecret.trim() === "") {
+    return false;
   }
 
   const authHeader = req.headers.get("authorization");
   const secretHeader = req.headers.get("x-cron-secret");
 
-  if (secretHeader && secretHeader === cronSecret) {
-    return true;
-  }
-
-  if (authHeader) {
+  let providedSecret = "";
+  if (secretHeader) {
+    providedSecret = secretHeader.trim();
+  } else if (authHeader) {
     const [scheme, token] = authHeader.split(" ");
-    if (scheme?.toLowerCase() === "bearer" && token === cronSecret) {
-      return true;
+    if (scheme?.toLowerCase() === "bearer" && token) {
+      providedSecret = token.trim();
     }
   }
 
-  return false;
+  if (!providedSecret) {
+    return false;
+  }
+
+  const providedBuffer = Buffer.from(providedSecret, "utf-8");
+  const expectedBuffer = Buffer.from(cronSecret, "utf-8");
+
+  if (providedBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  try {
+    return crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+  } catch {
+    return false;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -45,6 +57,7 @@ async function handleCron(req: NextRequest) {
       details: {
         path: req.nextUrl.pathname,
         ip: req.headers.get("x-forwarded-for") || "unknown",
+        // Never log secrets or tokens
       },
     });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -56,6 +69,9 @@ async function handleCron(req: NextRequest) {
     "CLEANUP_EXPIRED_SESSIONS",
     "PURGE_EXPIRED_INVITATIONS",
     "RETRY_FAILED_WEBHOOKS",
+    "CLEANUP_ORPHANED_UPLOADS",
+    "CLEANUP_OLD_NOTIFICATIONS",
+    "RECOVER_STALE_WORKFLOWS",
   ];
 
   if (jobParam) {

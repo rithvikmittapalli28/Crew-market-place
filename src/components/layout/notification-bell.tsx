@@ -32,7 +32,10 @@ export function NotificationBell() {
   const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
+  const [sseConnected, setSseConnected] = React.useState(false);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const reconnectTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const backoffRef = React.useRef<number>(1000);
 
   const fetchNotifications = React.useCallback(async () => {
     try {
@@ -47,27 +50,120 @@ export function NotificationBell() {
     }
   }, []);
 
+  // 1. Real-time Server-Sent Events (SSE) listener with exponential backoff
   React.useEffect(() => {
-    let isMounted = true;
-    const load = async () => {
+    let eventSource: EventSource | null = null;
+    let isDisposed = false;
+
+    function connectSse() {
+      if (isDisposed) return;
+
       try {
-        const res = await fetch("/api/notifications");
-        if (res.ok && isMounted) {
-          const data = await res.json();
-          setNotifications(data.notifications || []);
-          setUnreadCount(data.unreadCount || 0);
-        }
+        eventSource = new EventSource("/api/notifications/events");
+
+        eventSource.onopen = () => {
+          setSseConnected(true);
+          backoffRef.current = 1000; // Reset backoff upon successful connection
+        };
+
+        eventSource.addEventListener("connected", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (typeof data.unreadCount === "number") {
+              setUnreadCount(data.unreadCount);
+            }
+          } catch (err) {
+            console.error("Error parsing connected event:", err);
+          }
+        });
+
+        eventSource.addEventListener("notification", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.notification) {
+              setNotifications((prev) => {
+                // Deduplicate by notification ID
+                if (prev.some((n) => n.id === data.notification.id)) {
+                  return prev;
+                }
+                return [data.notification, ...prev];
+              });
+            }
+            if (typeof data.unreadCount === "number") {
+              setUnreadCount(data.unreadCount);
+            }
+          } catch (err) {
+            console.error("Error parsing notification SSE event:", err);
+          }
+        });
+
+        eventSource.addEventListener("unread_count", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === "NOTIFICATIONS" && typeof data.unreadCount === "number") {
+              setUnreadCount(data.unreadCount);
+            }
+          } catch (err) {
+            console.error("Error parsing unread_count SSE event:", err);
+          }
+        });
+
+        eventSource.addEventListener("session_revoked", () => {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          setSseConnected(false);
+        });
+
+        eventSource.onerror = () => {
+          setSseConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+
+          if (!isDisposed) {
+            // Reconnect with exponential backoff (capped at 10s)
+            const nextDelay = Math.min(backoffRef.current * 1.5, 10000);
+            backoffRef.current = nextDelay;
+            reconnectTimeoutRef.current = setTimeout(connectSse, nextDelay);
+          }
+        };
       } catch (err) {
-        console.error("Failed to load notifications:", err);
+        setSseConnected(false);
+        console.error("Failed to initialize SSE EventSource:", err);
       }
-    };
-    void load();
-    const interval = setInterval(load, 20000);
+    }
+
+    // Initial fetch to load notification list deferred to prevent synchronous cascading render
+    const initTimer = setTimeout(() => {
+      if (!isDisposed) {
+        void fetchNotifications();
+      }
+    }, 0);
+
+    // Connect to SSE stream
+    connectSse();
+
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+      isDisposed = true;
+      clearTimeout(initTimer);
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (eventSource) eventSource.close();
     };
-  }, []);
+  }, [fetchNotifications]);
+
+  // 2. Graceful polling fallback: only runs if SSE is not actively connected
+  React.useEffect(() => {
+    if (sseConnected) return;
+
+    const interval = setInterval(() => {
+      void fetchNotifications();
+    }, 20000);
+
+    return () => clearInterval(interval);
+  }, [sseConnected, fetchNotifications]);
 
   // Close on outside click
   React.useEffect(() => {

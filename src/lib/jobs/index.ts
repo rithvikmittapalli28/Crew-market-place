@@ -1,15 +1,22 @@
 /**
  * Background Job Abstraction for Crewn Platform
- * Manages asynchronous task execution, error capturing, and scheduled maintenance operations.
+ * Manages asynchronous task execution, distributed Redis locking, error capturing,
+ * and scheduled maintenance operations.
  */
 
+import Redis from "ioredis";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { getRedisClient } from "@/lib/redis/client";
+import { getStorageProvider } from "@/lib/storage";
 
 export type JobName =
   | "CLEANUP_EXPIRED_SESSIONS"
   | "RETRY_FAILED_WEBHOOKS"
   | "PURGE_EXPIRED_INVITATIONS"
+  | "CLEANUP_ORPHANED_UPLOADS"
+  | "CLEANUP_OLD_NOTIFICATIONS"
+  | "RECOVER_STALE_WORKFLOWS"
   | "SEND_TRANSACTIONAL_EMAIL";
 
 export interface JobContext {
@@ -30,6 +37,87 @@ export function registerJobHandler(name: JobName, handler: JobHandler) {
   jobRegistry.set(name, handler);
 }
 
+/**
+ * Distributed Lock abstraction using Redis (SET NX EX + timing-safe Lua release)
+ * with a process-local fallback for single-instance development/testing.
+ */
+export class DistributedLock {
+  private redis: Redis | null = null;
+  private customClientProvided = false;
+  private localLocks = new Map<string, { token: string; expiresAt: number }>();
+
+  constructor(redisClient?: Redis | null) {
+    if (redisClient !== undefined) {
+      this.redis = redisClient;
+      this.customClientProvided = true;
+    }
+  }
+
+  private getClient(): Redis | null {
+    if (this.customClientProvided) return this.redis;
+    return getRedisClient();
+  }
+
+  async acquire(lockKey: string, ttlSeconds = 60): Promise<string | null> {
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const fullKey = `lock:job:${lockKey}`;
+
+    const client = this.getClient();
+    if (client) {
+      try {
+        const acquired = await client.set(fullKey, token, "EX", ttlSeconds, "NX");
+        return acquired === "OK" ? token : null;
+      } catch (err) {
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            `Failed to acquire Redis lock for job "${lockKey}" in production: ${(err as Error).message}`
+          );
+        }
+      }
+    }
+
+    // Process-local fallback for non-production environments
+    const now = Date.now();
+    const existing = this.localLocks.get(fullKey);
+    if (existing && existing.expiresAt > now) {
+      return null;
+    }
+
+    this.localLocks.set(fullKey, { token, expiresAt: now + ttlSeconds * 1000 });
+    return token;
+  }
+
+  async release(lockKey: string, token: string): Promise<boolean> {
+    const fullKey = `lock:job:${lockKey}`;
+    const client = this.getClient();
+
+    if (client) {
+      try {
+        const luaScript = `
+          if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+          else
+            return 0
+          end
+        `;
+        const res = await client.eval(luaScript, 1, fullKey, token);
+        return res === 1;
+      } catch {
+        return false;
+      }
+    }
+
+    const existing = this.localLocks.get(fullKey);
+    if (existing && existing.token === token) {
+      this.localLocks.delete(fullKey);
+      return true;
+    }
+    return false;
+  }
+}
+
+export const distributedLock = new DistributedLock();
+
 // ---------------------------------------------------------------------------
 // Built-in Background Maintenance Handlers
 // ---------------------------------------------------------------------------
@@ -40,7 +128,7 @@ registerJobHandler("CLEANUP_EXPIRED_SESSIONS", async () => {
     where: {
       OR: [
         { expiresAt: { lt: new Date() } },
-        { revokedAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }, // 30 days after revocation
+        { revokedAt: { lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }, // 7 days after revocation
       ],
     },
   });
@@ -75,7 +163,6 @@ registerJobHandler("PURGE_EXPIRED_INVITATIONS", async () => {
 
 // 3. Webhook retry handler
 registerJobHandler("RETRY_FAILED_WEBHOOKS", async () => {
-  // Finds unhandled or failed webhook events with attempts < 5
   const failedEvents = await prisma.webhookEvent.findMany({
     where: {
       isProcessed: false,
@@ -87,19 +174,31 @@ registerJobHandler("RETRY_FAILED_WEBHOOKS", async () => {
   });
 
   let reprocessedCount = 0;
+  let deadLetterCount = 0;
 
   for (const event of failedEvents) {
     try {
-      await prisma.webhookEvent.update({
-        where: { id: event.id },
-        data: {
-          attempts: { increment: 1 },
-          processingStatus: "PROCESSING",
-        },
-      });
-
-      // The caller / route handles event reprocessing
-      reprocessedCount++;
+      const nextAttempts = event.attempts + 1;
+      if (nextAttempts >= 5) {
+        await prisma.webhookEvent.update({
+          where: { id: event.id },
+          data: {
+            attempts: nextAttempts,
+            processingStatus: "DEAD_LETTER",
+            processingError: "Exceeded maximum retry attempts (5). Moved to durable DLQ.",
+          },
+        });
+        deadLetterCount++;
+      } else {
+        await prisma.webhookEvent.update({
+          where: { id: event.id },
+          data: {
+            attempts: nextAttempts,
+            processingStatus: "PROCESSING",
+          },
+        });
+        reprocessedCount++;
+      }
     } catch (err) {
       logger.error({
         category: "WEBHOOK",
@@ -109,16 +208,87 @@ registerJobHandler("RETRY_FAILED_WEBHOOKS", async () => {
     }
   }
 
-  return { success: true, result: { retriedEvents: reprocessedCount } };
+  return { success: true, result: { retriedEvents: reprocessedCount, deadLetterEvents: deadLetterCount } };
+});
+
+// 4. Orphaned upload cleanup (files older than 24h unattached to any entity)
+registerJobHandler("CLEANUP_ORPHANED_UPLOADS", async () => {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const orphanedFiles = await prisma.file.findMany({
+    where: {
+      createdAt: { lt: cutoff },
+      projectId: null,
+      taskId: null,
+      resourceType: null,
+      resourceId: null,
+      portfolioCovers: { none: {} },
+      deliverableVersions: { none: {} },
+      taskAttachments: { none: {} },
+      messageAttachments: { none: {} },
+      disputeMessages: { none: {} },
+    },
+    take: 50,
+  });
+
+  let deletedCount = 0;
+  const storage = getStorageProvider();
+
+  for (const file of orphanedFiles) {
+    try {
+      if (storage) {
+        await storage.deleteFile(file.storageKey);
+      }
+      await prisma.file.delete({ where: { id: file.id } });
+      deletedCount++;
+    } catch (err) {
+      logger.warn({
+        category: "STORAGE",
+        message: `Failed cleaning up orphaned file ${file.id}`,
+        details: (err as Error).message,
+      });
+    }
+  }
+
+  return { success: true, result: { deletedOrphanedFiles: deletedCount } };
+});
+
+// 5. Old notification cleanup (read notifications older than 90 days)
+registerJobHandler("CLEANUP_OLD_NOTIFICATIONS", async () => {
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const result = await prisma.notification.deleteMany({
+    where: {
+      isRead: true,
+      createdAt: { lt: cutoff },
+    },
+  });
+
+  return { success: true, result: { deletedOldNotifications: result.count } };
+});
+
+// 6. Stale workflow recovery (mark abandoned pending payments older than 2 hours as FAILED)
+registerJobHandler("RECOVER_STALE_WORKFLOWS", async () => {
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const result = await prisma.paymentTransaction.updateMany({
+    where: {
+      status: "PENDING",
+      createdAt: { lt: cutoff },
+    },
+    data: {
+      status: "FAILED",
+    },
+  });
+
+  return { success: true, result: { recoveredTransactions: result.count } };
 });
 
 /**
- * Dispatch and execute a background job
+ * Dispatch and execute a background job with distributed lock protection.
  */
 export async function executeJob(
   name: JobName,
-  payload?: Record<string, unknown>
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  payload?: Record<string, unknown>,
+  options?: { lock?: DistributedLock; lockTtlSeconds?: number }
+): Promise<{ success: boolean; result?: unknown; error?: string; skipped?: boolean }> {
   const handler = jobRegistry.get(name);
   if (!handler) {
     logger.warn({
@@ -126,6 +296,21 @@ export async function executeJob(
       message: `No handler registered for background job: ${name}`,
     });
     return { success: false, error: `Handler not registered for ${name}` };
+  }
+
+  const locker = options?.lock || distributedLock;
+  const lockToken = await locker.acquire(name, options?.lockTtlSeconds || 60);
+
+  if (!lockToken) {
+    logger.warn({
+      category: "BACKGROUND_JOB",
+      message: `Job ${name} skipped: singleton lock held by another instance.`,
+    });
+    return {
+      success: true,
+      skipped: true,
+      result: { skipped: true, reason: "Lock held by another instance" },
+    };
   }
 
   const context: JobContext = {
@@ -157,5 +342,7 @@ export async function executeJob(
       details: { jobId: context.id, error: errorMsg },
     });
     return { success: false, error: errorMsg };
+  } finally {
+    await locker.release(name, lockToken);
   }
 }

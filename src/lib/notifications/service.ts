@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotificationType } from "@prisma/client";
+import { realtimeBus } from "@/lib/realtime/bus";
 
 export interface CreateNotificationParams {
   userId: string;
@@ -29,7 +30,7 @@ export async function dispatchNotification({
       return null;
     }
 
-    return await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data: {
         userId,
         type,
@@ -39,6 +40,23 @@ export async function dispatchNotification({
         isRead: false,
       },
     });
+
+    // Compute updated unread count and publish real-time notification event
+    const unreadCount = await prisma.notification.count({
+      where: { userId, isRead: false },
+    });
+
+    realtimeBus.publishNotification(userId, {
+      notification,
+      unreadCount,
+    });
+
+    realtimeBus.publishUnreadCount(userId, {
+      type: "NOTIFICATIONS",
+      unreadCount,
+    });
+
+    return notification;
   } catch (error) {
     console.error("Failed to dispatch notification:", error);
     return null;
@@ -52,7 +70,7 @@ export async function getUserNotifications(
   userId: string,
   options?: { limit?: number; unreadOnly?: boolean }
 ) {
-  const limit = options?.limit ?? 30;
+  const limit = Math.min(Math.max(1, options?.limit ?? 30), 50);
   const whereClause: { userId: string; isRead?: boolean } = { userId };
 
   if (options?.unreadOnly) {
@@ -77,7 +95,7 @@ export async function getUserNotifications(
  * Marks a specific notification as read.
  */
 export async function markNotificationRead(notificationId: string, userId: string) {
-  return await prisma.notification.updateMany({
+  const res = await prisma.notification.updateMany({
     where: {
       id: notificationId,
       userId,
@@ -88,13 +106,24 @@ export async function markNotificationRead(notificationId: string, userId: strin
       readAt: new Date(),
     },
   });
+
+  const unreadCount = await prisma.notification.count({
+    where: { userId, isRead: false },
+  });
+
+  realtimeBus.publishUnreadCount(userId, {
+    type: "NOTIFICATIONS",
+    unreadCount,
+  });
+
+  return res;
 }
 
 /**
  * Marks all unread notifications for a user as read.
  */
 export async function markAllNotificationsRead(userId: string) {
-  return await prisma.notification.updateMany({
+  const res = await prisma.notification.updateMany({
     where: {
       userId,
       isRead: false,
@@ -104,4 +133,11 @@ export async function markAllNotificationsRead(userId: string) {
       readAt: new Date(),
     },
   });
+
+  realtimeBus.publishUnreadCount(userId, {
+    type: "NOTIFICATIONS",
+    unreadCount: 0,
+  });
+
+  return res;
 }

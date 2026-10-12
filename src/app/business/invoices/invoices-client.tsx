@@ -9,6 +9,7 @@ import {
   FileText,
   Printer,
   ShieldCheck,
+  Download,
 } from "lucide-react";
 import { formatINR } from "@/lib/payments/currency";
 
@@ -143,8 +144,9 @@ export function BusinessInvoicesClient({ invoices }: InvoicesClientProps) {
                     <Button
                       size="sm"
                       variant="outline"
+                      id={`view-invoice-${inv.id}`}
                       onClick={() => setSelectedInvoice(inv)}
-                      className="text-xs h-7 gap-1"
+                      className="text-xs h-7 gap-1 view-invoice-trigger"
                     >
                       <FileText className="h-3 w-3" />
                       View Invoice
@@ -235,19 +237,30 @@ export function BusinessInvoicesClient({ invoices }: InvoicesClientProps) {
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-border">
+                <a
+                  href={`/api/invoices/${selectedInvoice.id}/pdf`}
+                  target="_blank"
+                  rel="noreferrer"
+                  download
+                  id="download-invoice-pdf-btn"
+                  className="inline-flex items-center justify-center rounded-md text-xs font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 gap-1.5 transition-colors"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download PDF
+                </a>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => window.print()}
-                  className="text-xs gap-1.5"
+                  className="text-xs gap-1.5 h-8"
                 >
                   <Printer className="h-3.5 w-3.5" />
-                  Print / Save PDF
+                  Print / Save
                 </Button>
                 <Button
                   size="sm"
                   onClick={() => setSelectedInvoice(null)}
-                  className="text-xs"
+                  className="text-xs h-8"
                 >
                   Close
                 </Button>

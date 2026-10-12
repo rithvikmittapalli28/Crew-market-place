@@ -5,9 +5,48 @@ import { calculatePlatformFee } from "@/lib/payments/platform-fee";
 import { generateInvoiceNumber, buildMilestoneInvoiceItems } from "@/lib/payments/invoice";
 import { logProjectActivity } from "@/lib/projects/activity";
 import { dispatchNotification } from "@/lib/notifications/service";
+import { logger } from "@/lib/logger";
+
+interface RazorpayWebhookPayload {
+  event?: string;
+  event_id?: string;
+  payload?: {
+    payment?: {
+      entity?: {
+        id?: string;
+        order_id?: string;
+        amount?: number;
+        currency?: string;
+        status?: string;
+        method?: string;
+        notes?: Record<string, string>;
+        error_description?: string;
+        [key: string]: unknown;
+      };
+    };
+    order?: {
+      entity?: {
+        id?: string;
+        status?: string;
+        [key: string]: unknown;
+      };
+    };
+    refund?: {
+      entity?: {
+        id?: string;
+        payment_id?: string;
+        amount?: number;
+        status?: string;
+        [key: string]: unknown;
+      };
+    };
+  };
+  [key: string]: unknown;
+}
 
 export async function POST(req: NextRequest) {
   let rawBody = "";
+  let webhookRecord: { id: string; attempts: number } | null = null;
   try {
     // 1. Read exact raw text body before any parsing (critical for HMAC validation)
     rawBody = await req.text();
@@ -23,23 +62,45 @@ export async function POST(req: NextRequest) {
     // 2. Cryptographic HMAC-SHA256 signature verification
     const isValid = verifyWebhookSignature({ rawBody, signature });
     if (!isValid) {
-      console.warn("⚠️ Invalid Razorpay webhook signature received");
+      logger.warn({
+        category: "SECURITY",
+        message: "Invalid Razorpay webhook signature received",
+      });
       return NextResponse.json(
         { error: "Invalid webhook signature" },
         { status: 400 }
       );
     }
 
-    // 3. Parse JSON payload
-    const event = JSON.parse(rawBody);
+    // 3. Parse JSON payload with defensive malformed payload handling
+    let event: RazorpayWebhookPayload;
+    try {
+      event = JSON.parse(rawBody) as RazorpayWebhookPayload;
+    } catch {
+      logger.warn({
+        category: "WEBHOOK",
+        message: "Malformed JSON in webhook request body",
+      });
+      return NextResponse.json(
+        { error: "Malformed payload" },
+        { status: 400 }
+      );
+    }
+
     const eventType = event.event as string;
+    if (!eventType) {
+      return NextResponse.json(
+        { error: "Missing event type in payload" },
+        { status: 400 }
+      );
+    }
+
     const gatewayEventId =
       event.event_id ||
       req.headers.get("x-razorpay-event-id") ||
       `evt_${eventType}_${Date.now()}`;
 
     // 4. Idempotency & Deduplication
-    let webhookRecord;
     try {
       webhookRecord = await prisma.webhookEvent.create({
         data: {
@@ -208,10 +269,38 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status: "ok" }, { status: 200 });
   } catch (error: unknown) {
-    console.error("Razorpay webhook handler error:", error);
-    const errMessage = error instanceof Error ? error.message : "Webhook processing error";
+    // 7. Durable Dead-Letter Queue recording on failure
+    if (webhookRecord?.id) {
+      try {
+        const nextAttempts = (webhookRecord.attempts || 0) + 1;
+        const isDeadLetter = nextAttempts >= 5;
+        await prisma.webhookEvent.update({
+          where: { id: webhookRecord.id },
+          data: {
+            processingStatus: isDeadLetter ? "DEAD_LETTER" : "FAILED",
+            processingError: error instanceof Error ? error.message : String(error),
+            attempts: nextAttempts,
+          },
+        });
+      } catch (dbErr) {
+        logger.error({
+          category: "WEBHOOK",
+          message: "Failed to persist DLQ status for failed webhook",
+          details: dbErr,
+        });
+      }
+    }
+
+    // Retain internal details only in secure server-side logs
+    logger.error({
+      category: "WEBHOOK",
+      message: "Razorpay webhook handler execution failed",
+      details: error instanceof Error ? error.stack || error.message : String(error),
+    });
+
+    // Clean, generic error response without internal leakages
     return NextResponse.json(
-      { error: "Webhook processing error", details: errMessage },
+      { error: "Webhook processing error" },
       { status: 500 }
     );
   }

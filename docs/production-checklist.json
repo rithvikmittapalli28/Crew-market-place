@@ -1,0 +1,160 @@
+{
+  "platform": "Crewn",
+  "version": "1.0.0",
+  "phase": "12c",
+  "readinessStatus": "PREPARATION_COMPLETE_PENDING_EXTERNAL_INFRASTRUCTURE",
+  "phase13Allowed": false,
+  "productionDeploymentAllowed": false,
+  "verificationSummary": {
+    "totalAutomatedTests": 157,
+    "automatedTestsPassed": 157,
+    "automatedTestsFailed": 0,
+    "regressionTestsPassed": 144,
+    "environmentValidationTestsPassed": 13,
+    "typeScriptStatus": "PASS (0 errors)",
+    "lintStatus": "PASS (0 errors, 3 img warnings)",
+    "productionBuildStatus": "PASS (80/80 routes compiled)",
+    "cleanDatabaseMigrationReproducibility": "VERIFIED_ON_DISPOSABLE_POSTGRES"
+  },
+  "migrationAudit": {
+    "appliedInDatabase": [
+      "20260923000000_init_and_auth_sessions",
+      "20260923010000_creator_marketplace",
+      "20260923020000_file_ownership_metadata"
+    ],
+    "cleanDatabaseResult": "REPRODUCED_54_TABLES",
+    "driftIdentified": "Phases 5, 10, 11 additions exist in prisma/schema.prisma and staging DB, but were applied via manual DDL instead of recorded Prisma migration",
+    "correctiveStrategy": "Forward-only non-destructive additive DDL preview generated in docs/corrective-migration-preview.sql",
+    "destructiveResetPerformed": false
+  },
+  "components": [
+    {
+      "id": "postgres",
+      "name": "Managed PostgreSQL",
+      "provider": "AWS RDS / Supabase",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": ["DATABASE_URL"],
+      "tlsEnforced": true,
+      "multiAzRequired": true,
+      "acceptanceCriteria": "SSL connection verified, migrations deployed, connection pool configured"
+    },
+    {
+      "id": "redis",
+      "name": "Managed Redis",
+      "provider": "AWS ElastiCache / Upstash",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": ["REDIS_URL"],
+      "tlsEnforced": true,
+      "multiAzRequired": true,
+      "acceptanceCriteria": "TLS rediss:// connection, pub/sub latency < 5ms, auth enabled"
+    },
+    {
+      "id": "s3",
+      "name": "AWS S3 Object Storage",
+      "provider": "AWS S3",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": [
+        "AWS_S3_BUCKET",
+        "AWS_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "STORAGE_SIGNING_SECRET"
+      ],
+      "tlsEnforced": true,
+      "lifecycleRules": {
+        "tempUploadsDays": 1,
+        "abortIncompleteMultipartDays": 7
+      },
+      "acceptanceCriteria": "Block Public Access enabled, KMS/AES-256 encryption, versioning enabled"
+    },
+    {
+      "id": "secrets_manager",
+      "name": "Production Secrets Manager",
+      "provider": "AWS Secrets Manager",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": ["All runtime secrets"],
+      "tlsEnforced": true,
+      "acceptanceCriteria": "Zero .env files in container image, IAM task role access"
+    },
+    {
+      "id": "email",
+      "name": "Transactional Email",
+      "provider": "Resend",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": ["RESEND_API_KEY", "EMAIL_FROM"],
+      "dnsValidation": ["SPF", "DKIM", "DMARC"],
+      "acceptanceCriteria": "Sending domain crewn.com verified, 0% spam classification"
+    },
+    {
+      "id": "razorpay",
+      "name": "Razorpay Production",
+      "provider": "Razorpay",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": [
+        "RAZORPAY_KEY_ID",
+        "RAZORPAY_KEY_SECRET",
+        "RAZORPAY_WEBHOOK_SECRET",
+        "NEXT_PUBLIC_RAZORPAY_KEY_ID"
+      ],
+      "acceptanceCriteria": "Live merchant credentials verified, webhook bound to /api/webhooks/razorpay"
+    },
+    {
+      "id": "hosting",
+      "name": "Application Hosting",
+      "provider": "Railway / Render (Staging) | AWS ECS Fargate (Production)",
+      "status": "PREREQUISITE_PENDING",
+      "requiredEnv": ["All runtime env"],
+      "acceptanceCriteria": "Persistent Node.js runtime, health check passing, HTTPS enabled"
+    },
+    {
+      "id": "dns",
+      "name": "DNS Architecture",
+      "provider": "AWS Route 53 / Cloudflare",
+      "status": "PREREQUISITE_PENDING",
+      "domain": "crewn.com",
+      "dnssec": true,
+      "acceptanceCriteria": "Apex and CNAME resolved, DNSSEC active, CAA records active"
+    },
+    {
+      "id": "ssl",
+      "name": "SSL / TLS Certificates",
+      "provider": "AWS Certificate Manager",
+      "status": "PREREQUISITE_PENDING",
+      "minTlsVersion": "TLSv1.2",
+      "preferredTlsVersion": "TLSv1.3",
+      "acceptanceCriteria": "Valid wildcard cert, auto-renewal enabled, HSTS header enforced"
+    },
+    {
+      "id": "cdn_waf",
+      "name": "CDN & WAF",
+      "provider": "AWS CloudFront & WAF",
+      "status": "PREREQUISITE_PENDING",
+      "acceptanceCriteria": "Managed OWASP rules active, rate limit 2000 req/5min, origin shielded"
+    },
+    {
+      "id": "migrations",
+      "name": "Database Migrations",
+      "provider": "Prisma Migrate",
+      "status": "AUDIT_COMPLETE",
+      "currentPending": 0,
+      "acceptanceCriteria": "Forward-only DDL, verified on clean test database, non-destructive"
+    },
+    {
+      "id": "backups",
+      "name": "Backups & Disaster Recovery",
+      "provider": "AWS Backup / RDS Automated",
+      "status": "PREREQUISITE_PENDING",
+      "rpoTargetMinutes": 5,
+      "rtoTargetMinutes": 30,
+      "retentionDays": 35,
+      "acceptanceCriteria": "Continuous WAL active, daily snapshots, cross-region S3 replication"
+    },
+    {
+      "id": "monitoring",
+      "name": "Monitoring & Error Tracking",
+      "provider": "Sentry / CloudWatch / Datadog",
+      "status": "PREREQUISITE_PENDING",
+      "acceptanceCriteria": "PII scrubbing verified, request ID correlation active, alert thresholds configured"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ConversationType } from "@prisma/client";
 import { dispatchNotification } from "@/lib/notifications/service";
+import { realtimeBus } from "@/lib/realtime/bus";
 
 export interface SendMessageParams {
   conversationId: string;
@@ -443,19 +444,23 @@ export async function sendMessage({
     return msg;
   });
 
-  // Asynchronously dispatch notifications to all other members
+  // 1. Publish real-time message event to conversation channel immediately
+  realtimeBus.publishConversationMessage(conversationId, message);
+
+  // 2. Asynchronously dispatch notifications and unread-count updates to all other members
   const otherMembers = await prisma.conversationMember.findMany({
     where: {
       conversationId,
       userId: { not: senderId },
     },
-    select: { userId: true },
+    select: { userId: true, lastReadAt: true },
   });
 
   const senderName = message.sender.name || message.sender.email;
   const preview = message.content ? message.content.slice(0, 100) : "Sent an attachment";
 
   for (const m of otherMembers) {
+    // In-app notification
     dispatchNotification({
       userId: m.userId,
       type: "MESSAGE",
@@ -463,6 +468,26 @@ export async function sendMessage({
       body: preview,
       linkUrl: `/messages?c=${conversationId}`,
     }).catch((err) => console.error("Message notification error:", err));
+
+    // Real-time unread count and latest message for member's conversation list
+    prisma.message.count({
+      where: {
+        conversationId,
+        senderId: { not: m.userId },
+        createdAt: { gt: m.lastReadAt ?? new Date(0) },
+      },
+    }).then((unreadCount) => {
+      realtimeBus.publishUserConversationMessage(m.userId, {
+        conversationId,
+        message,
+        unreadCount,
+      });
+      realtimeBus.publishUnreadCount(m.userId, {
+        type: "MESSAGES",
+        conversationId,
+        unreadCount,
+      });
+    }).catch((err) => console.error("Error publishing user conversation event:", err));
   }
 
   return message;
@@ -474,7 +499,7 @@ export async function sendMessage({
 export async function getConversationMessages(
   conversationId: string,
   userId: string,
-  options?: { take?: number }
+  options?: { take?: number; cursor?: string }
 ) {
   // Verify caller membership
   const membership = await prisma.conversationMember.findUnique({
@@ -490,12 +515,13 @@ export async function getConversationMessages(
     throw new Error("Access denied: You are not a member of this conversation");
   }
 
-  const take = options?.take ?? 100;
+  const take = Math.min(Math.max(1, options?.take ?? 50), 50);
 
   const messages = await prisma.message.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
     take,
+    ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     include: {
       sender: {
         select: {
@@ -530,13 +556,30 @@ export async function getConversationMessages(
  * Marks a conversation as read for the user.
  */
 export async function markConversationAsRead(conversationId: string, userId: string) {
-  return await prisma.conversationMember.updateMany({
+  const now = new Date();
+  const res = await prisma.conversationMember.updateMany({
     where: {
       conversationId,
       userId,
     },
     data: {
-      lastReadAt: new Date(),
+      lastReadAt: now,
     },
   });
+
+  // Publish read receipt event to conversation channel
+  realtimeBus.publishConversationRead(conversationId, {
+    conversationId,
+    userId,
+    lastReadAt: now.toISOString(),
+  });
+
+  // Publish unread count reset to user channel
+  realtimeBus.publishUnreadCount(userId, {
+    type: "MESSAGES",
+    conversationId,
+    unreadCount: 0,
+  });
+
+  return res;
 }

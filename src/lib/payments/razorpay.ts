@@ -1,24 +1,46 @@
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { env } from "@/lib/env";
 
 let razorpayClient: Razorpay | null = null;
 
+export function getRazorpayCredentials(): { keyId: string; keySecret: string } {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (!keyId || keyId.trim() === "" || !keySecret || keySecret.trim() === "") {
+    throw new Error(
+      "Razorpay credentials missing: RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be explicitly configured."
+    );
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    if (keyId.includes("placeholder") || keySecret.includes("placeholder")) {
+      throw new Error(
+        "Invalid production Razorpay credentials: placeholder credentials are forbidden in production."
+      );
+    }
+  }
+
+  return { keyId, keySecret };
+}
+
 export function getRazorpayClient(): Razorpay {
   if (!razorpayClient) {
-    const keyId = env.RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID;
-    const keySecret = env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET;
-
-    if (!keyId || !keySecret) {
-      console.warn("⚠️ Razorpay credentials are not set in environment. Running in sandbox initialization mode.");
-    }
+    const { keyId, keySecret } = getRazorpayCredentials();
 
     razorpayClient = new Razorpay({
-      key_id: keyId || "rzp_test_placeholder",
-      key_secret: keySecret || "placeholder_secret",
+      key_id: keyId,
+      key_secret: keySecret,
     });
   }
   return razorpayClient;
+}
+
+/**
+ * Reset client cache (useful for testing configuration changes).
+ */
+export function resetRazorpayClient(): void {
+  razorpayClient = null;
 }
 
 /**
@@ -31,8 +53,13 @@ export function verifyPaymentSignature(params: {
   signature: string;
   secret?: string;
 }): boolean {
-  const secret = params.secret || env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET || "";
-  if (!secret) return false;
+  const secret = params.secret || process.env.RAZORPAY_KEY_SECRET || "";
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RAZORPAY_KEY_SECRET is required to verify payment signature in production.");
+    }
+    return false;
+  }
 
   const payload = `${params.orderId}|${params.paymentId}`;
   const expectedSignature = crypto
@@ -61,10 +88,14 @@ export function verifyWebhookSignature(params: {
 }): boolean {
   const webhookSecret =
     params.webhookSecret ||
-    env.RAZORPAY_WEBHOOK_SECRET ||
     process.env.RAZORPAY_WEBHOOK_SECRET ||
     "";
-  if (!webhookSecret) return false;
+  if (!webhookSecret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RAZORPAY_WEBHOOK_SECRET is required for webhook signature verification in production.");
+    }
+    return false;
+  }
 
   const expectedSignature = crypto
     .createHmac("sha256", webhookSecret)

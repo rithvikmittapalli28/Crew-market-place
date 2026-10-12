@@ -8,6 +8,7 @@ import { dispatchNotification } from "@/lib/notifications/service";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
+  let webhookRecord: { id: string; attempts: number; gatewayEventId: string; payloadJson: string } | null = null;
   try {
     const user = await getCurrentUser();
     // Allow admins or internal system calls
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
           attempts: { lt: 5 },
         };
 
-    const webhookRecord = await prisma.webhookEvent.findFirst({
+    webhookRecord = await prisma.webhookEvent.findFirst({
       where: whereClause,
       orderBy: { createdAt: "asc" },
     });
@@ -179,6 +180,27 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: unknown) {
+    if (webhookRecord?.id) {
+      try {
+        const nextAttempts = webhookRecord.attempts + 1;
+        const isDeadLetter = nextAttempts >= 5;
+        await prisma.webhookEvent.update({
+          where: { id: webhookRecord.id },
+          data: {
+            processingStatus: isDeadLetter ? "DEAD_LETTER" : "FAILED",
+            processingError: error instanceof Error ? error.message : String(error),
+            attempts: nextAttempts,
+          },
+        });
+      } catch (dbErr) {
+        logger.error({
+          category: "WEBHOOK",
+          message: "Failed to persist DLQ status on retry failure",
+          details: dbErr,
+        });
+      }
+    }
+
     logger.error({
       category: "WEBHOOK",
       message: "Webhook retry error",

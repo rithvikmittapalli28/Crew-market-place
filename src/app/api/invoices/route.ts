@@ -1,18 +1,25 @@
-import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getSessionRecord } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
+    // Use req.cookies directly for reliable test-context compatibility
+    const sessionCookie = req.cookies.get("crewn_session")?.value;
+    const sessionRecord = await getSessionRecord(sessionCookie);
+    if (!sessionRecord?.user || !sessionRecord.user.isActive) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const { user } = sessionRecord;
 
     let invoices;
 
     if (user.role === "BUSINESS") {
-      const businessIds = (user.businessMemberships ?? []).map((m) => m.businessId);
+      const memberships = await prisma.businessMember.findMany({
+        where: { userId: user.id },
+        select: { businessId: true },
+      });
+      const businessIds = memberships.map((m) => m.businessId);
       invoices = await prisma.invoice.findMany({
         where: { businessId: { in: businessIds } },
         orderBy: { createdAt: "desc" },

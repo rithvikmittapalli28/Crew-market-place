@@ -1,3 +1,7 @@
+import Redis from "ioredis";
+import { getRedisClient } from "@/lib/redis/client";
+import { logger } from "@/lib/logger";
+
 export interface RateLimitResult {
   success: boolean;
   limit: number;
@@ -11,6 +15,7 @@ export interface RateLimiter {
 
 /**
  * Sliding window in-memory rate limiter for development and local testing.
+ * NOT suitable for multi-instance production environments.
  */
 export class InMemoryRateLimiter implements RateLimiter {
   private cache = new Map<string, { timestamps: number[] }>();
@@ -28,7 +33,6 @@ export class InMemoryRateLimiter implements RateLimiter {
         }
       }, 10 * 60 * 1000);
 
-      // Unref interval in Node environments so it doesn't block shutdown
       if (typeof interval === "object" && "unref" in interval) {
         (interval as unknown as { unref(): void }).unref();
       }
@@ -40,7 +44,6 @@ export class InMemoryRateLimiter implements RateLimiter {
     const windowStart = now - windowMs;
 
     const record = this.cache.get(key) || { timestamps: [] };
-    // Remove timestamps older than the sliding window
     record.timestamps = record.timestamps.filter((ts) => ts > windowStart);
 
     if (record.timestamps.length >= limit) {
@@ -67,33 +70,86 @@ export class InMemoryRateLimiter implements RateLimiter {
 }
 
 /**
- * Shared Redis-compatible rate limiter for production multi-instance deployments.
- * Supports Upstash Redis REST or standard Redis-compatible backends.
+ * Distributed Redis rate limiter for production multi-instance deployments.
+ * Supports standard Redis protocol (via ioredis) or Upstash Redis REST.
+ * Strictly prevents silent in-memory fallback in production.
  */
 export class RedisRateLimiter implements RateLimiter {
-  private redisUrl: string;
+  private redisUrl?: string;
   private redisToken?: string;
-  private fallback: InMemoryRateLimiter;
+  private client?: Redis | null;
 
-  constructor(redisUrl: string, redisToken?: string) {
-    this.redisUrl = redisUrl;
-    this.redisToken = redisToken;
-    this.fallback = new InMemoryRateLimiter();
+  constructor(
+    optionsOrUrl?: { redisUrl?: string; redisToken?: string; client?: Redis } | string,
+    redisToken?: string
+  ) {
+    if (typeof optionsOrUrl === "string") {
+      this.redisUrl = optionsOrUrl;
+      this.redisToken = redisToken;
+      this.client = null;
+    } else {
+      this.redisUrl = optionsOrUrl?.redisUrl || process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL;
+      this.redisToken = optionsOrUrl?.redisToken || process.env.REDIS_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+      this.client = optionsOrUrl?.client ?? null;
+    }
   }
 
   async limit(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-    try {
-      // If Upstash REST API configured
-      if (this.redisToken && this.redisUrl.startsWith("http")) {
-        const url = `${this.redisUrl}/pipeline`;
-        const now = Date.now();
-        const windowStart = now - windowMs;
-        const redisKey = `ratelimit:${key}`;
+    const isProd = process.env.NODE_ENV === "production";
+    const redisKey = `ratelimit:${key}`;
+    const now = Date.now();
+    const windowStart = now - windowMs;
 
+    // 1. If standard Redis client is available or configured
+    try {
+      const redis = this.client || getRedisClient();
+      if (redis) {
+        const pipeline = redis.pipeline();
+        pipeline.zremrangebyscore(redisKey, 0, windowStart);
+        pipeline.zcard(redisKey);
+        pipeline.zadd(redisKey, now, `${now}-${Math.random().toString(36).slice(2, 8)}`);
+        pipeline.pexpire(redisKey, windowMs);
+
+        const results = await pipeline.exec();
+        if (results && results[1]) {
+          const count = (results[1][1] as number) || 0;
+          if (count >= limit) {
+            return {
+              success: false,
+              limit,
+              remaining: 0,
+              resetAt: now + windowMs,
+            };
+          }
+          return {
+            success: true,
+            limit,
+            remaining: Math.max(0, limit - count - 1),
+            resetAt: now + windowMs,
+          };
+        }
+      }
+    } catch (err) {
+      if (isProd) {
+        logger.error({
+          category: "SECURITY",
+          message: "Production Redis rate limiter failed",
+          details: (err as Error).message,
+        });
+        throw new Error(
+          `Production rate limiting failure: Redis is unavailable and silent in-memory fallback is forbidden in production.`
+        );
+      }
+    }
+
+    // 2. Upstash REST fallback if configured
+    if (this.redisToken && this.redisUrl && this.redisUrl.startsWith("http")) {
+      try {
+        const url = `${this.redisUrl}/pipeline`;
         const commands = [
           ["ZREMRANGEBYSCORE", redisKey, 0, windowStart],
           ["ZCARD", redisKey],
-          ["ZADD", redisKey, now, `${now}-${Math.random()}`],
+          ["ZADD", redisKey, now, `${now}-${Math.random().toString(36).slice(2, 8)}`],
           ["PEXPIRE", redisKey, windowMs],
         ];
 
@@ -124,32 +180,58 @@ export class RedisRateLimiter implements RateLimiter {
             resetAt: now + windowMs,
           };
         }
+      } catch (err) {
+        if (isProd) {
+          throw new Error(
+            `Production Upstash rate limiter failure: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
-
-      // Graceful fallback to memory limiter if Redis request fails
-      return this.fallback.limit(key, limit, windowMs);
-    } catch {
-      return this.fallback.limit(key, limit, windowMs);
     }
+
+    // In production, NEVER silently fall back to in-memory rate limiting!
+    if (isProd) {
+      throw new Error(
+        "REDIS_URL must be configured for rate limiting in production. Silent in-memory fallback is disabled."
+      );
+    }
+
+    // Explicitly permitted development/test fallback only
+    const devLimiter = new InMemoryRateLimiter();
+    return devLimiter.limit(key, limit, windowMs);
   }
 }
 
-// Singleton provider instance behind abstraction
 let rateLimiterInstance: RateLimiter | null = null;
 
 export function getRateLimiter(): RateLimiter {
   if (rateLimiterInstance) return rateLimiterInstance;
 
+  const isProd = process.env.NODE_ENV === "production";
   const redisUrl = process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.REDIS_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-  if (redisUrl && redisUrl.startsWith("http")) {
-    rateLimiterInstance = new RedisRateLimiter(redisUrl, redisToken);
+  if (isProd) {
+    if (!redisUrl) {
+      throw new Error(
+        "Production rate limiting requires a distributed Redis configuration (REDIS_URL or UPSTASH_REDIS_REST_URL)."
+      );
+    }
+    rateLimiterInstance = new RedisRateLimiter();
+    return rateLimiterInstance;
+  }
+
+  if (redisUrl) {
+    rateLimiterInstance = new RedisRateLimiter();
   } else {
+    // Development fallback
     rateLimiterInstance = new InMemoryRateLimiter();
   }
 
   return rateLimiterInstance;
+}
+
+export function resetRateLimiter(): void {
+  rateLimiterInstance = null;
 }
 
 /**

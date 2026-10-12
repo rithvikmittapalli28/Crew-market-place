@@ -27,6 +27,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ProjectWorkspaceClient } from "./workspace-client";
 import { MilestonePaymentActions } from "@/components/projects/milestone-payment-actions";
+import { ContractsTab } from "@/components/contracts/contracts-tab";
 
 type Props = { params: Promise<{ projectId: string }> };
 
@@ -218,6 +219,12 @@ export default async function ProjectWorkspacePage({ params }: Props) {
       actor: { select: { id: true, name: true, avatarUrl: true } },
     },
   });
+
+  // Default freelancer for contract creation (first non-business member)
+  const primaryFreelancerMember = project.members.find(
+    (m) => m.user.role === "FREELANCER" || m.role === "FREELANCER"
+  );
+  const defaultFreelancerId = primaryFreelancerMember?.user.id;
 
   return (
     <div className="min-h-screen bg-background">
@@ -626,6 +633,15 @@ export default async function ProjectWorkspacePage({ params }: Props) {
             </div>
           </div>
         )}
+        {/* Contracts section */}
+        <div className="space-y-4">
+          <ContractsTab
+            projectId={project.id}
+            currentUserId={access.user.id}
+            isBusinessMember={isBusinessMember}
+            defaultFreelancerId={defaultFreelancerId}
+          />
+        </div>
       </main>
     </div>
   );

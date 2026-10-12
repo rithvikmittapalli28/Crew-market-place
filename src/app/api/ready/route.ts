@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getStorageProvider } from "@/lib/storage";
-import { getRateLimiter } from "@/lib/auth/rate-limit";
+import { getRedisClient } from "@/lib/redis/client";
 import { logger } from "@/lib/logger";
 
 export async function GET() {
-  const checks: Record<string, "ok" | "degraded" | "failed"> = {
+  const checks: Record<string, "ok" | "failed" | "skipped"> = {
     database: "failed",
     storage: "failed",
-    rateLimiter: "failed",
+    redis: "skipped",
   };
 
   let isReady = true;
 
-  // 1. Database readiness
+  // 1. Database readiness check
   try {
     await prisma.$queryRaw`SELECT 1`;
     checks.database = "ok";
@@ -23,11 +23,11 @@ export async function GET() {
     logger.error({
       category: "API",
       message: "Database readiness check failed",
-      details: err,
+      details: (err as Error).message,
     });
   }
 
-  // 2. Storage readiness
+  // 2. Storage readiness check
   try {
     const storage = getStorageProvider();
     if (storage) {
@@ -39,22 +39,39 @@ export async function GET() {
     logger.error({
       category: "STORAGE",
       message: "Storage readiness check failed",
-      details: err,
+      details: (err as Error).message,
     });
   }
 
-  // 3. Rate limiter readiness
+  // 3. Redis / distributed cache readiness check
   try {
-    const limiter = getRateLimiter();
-    if (limiter) {
-      checks.rateLimiter = "ok";
+    const redis = getRedisClient();
+    if (redis) {
+      await redis.ping();
+      checks.redis = "ok";
+    } else if (process.env.NODE_ENV === "production") {
+      isReady = false;
+      checks.redis = "failed";
+    } else {
+      checks.redis = "skipped";
     }
-  } catch {
-    checks.rateLimiter = "degraded";
+  } catch (err) {
+    if (process.env.NODE_ENV === "production") {
+      isReady = false;
+      checks.redis = "failed";
+    } else {
+      checks.redis = "skipped";
+    }
+    logger.error({
+      category: "API",
+      message: "Redis readiness check failed",
+      details: (err as Error).message,
+    });
   }
 
   const statusCode = isReady ? 200 : 503;
 
+  // Never expose credentials, hostnames, secrets, or internal connection strings
   return NextResponse.json(
     {
       status: isReady ? "ready" : "unready",

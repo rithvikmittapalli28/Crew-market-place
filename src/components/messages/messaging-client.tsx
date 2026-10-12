@@ -18,6 +18,7 @@ import {
   Loader2,
   X,
   Briefcase,
+  ChevronLeft,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -92,6 +93,8 @@ export function MessagingClient({ currentUserId }: { currentUserId: string }) {
   const [loadingMessages, setLoadingMessages] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [uploadingFile, setUploadingFile] = React.useState(false);
+  const [convSseConnected, setConvSseConnected] = React.useState(false);
+  const [userSseConnected, setUserSseConnected] = React.useState(false);
 
   const [inputText, setInputText] = React.useState("");
   const [attachedFiles, setAttachedFiles] = React.useState<
@@ -211,25 +214,225 @@ export function MessagingClient({ currentUserId }: { currentUserId: string }) {
     []
   );
 
+  // 3a. User-level SSE listener: keeps conversation list unread badges & latest messages live across tabs
+  React.useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let isDisposed = false;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let backoff = 1000;
+
+    function connectUserSse() {
+      if (isDisposed) return;
+      try {
+        eventSource = new EventSource("/api/notifications/events");
+
+        eventSource.onopen = () => {
+          setUserSseConnected(true);
+          backoff = 1000;
+        };
+
+        eventSource.addEventListener("conversation_message", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            const { conversationId, message: newMsg, unreadCount } = data;
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id === conversationId) {
+                  return {
+                    ...c,
+                    unreadCount: c.id === selectedConvId ? 0 : unreadCount,
+                    latestMessage: {
+                      id: newMsg.id,
+                      content: newMsg.content,
+                      senderId: newMsg.senderId,
+                      senderName: newMsg.sender?.name || newMsg.sender?.email || "User",
+                      createdAt: newMsg.createdAt,
+                      hasAttachments: (newMsg.attachments?.length || 0) > 0,
+                    },
+                    updatedAt: newMsg.createdAt,
+                  };
+                }
+                return c;
+              })
+            );
+          } catch (err) {
+            console.error("Error parsing conversation_message SSE event:", err);
+          }
+        });
+
+        eventSource.addEventListener("unread_count", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === "MESSAGES" && data.conversationId) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === data.conversationId ? { ...c, unreadCount: data.unreadCount } : c
+                )
+              );
+            }
+          } catch (err) {
+            console.error("Error parsing unread_count SSE event:", err);
+          }
+        });
+
+        eventSource.onerror = () => {
+          setUserSseConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          if (!isDisposed) {
+            backoff = Math.min(backoff * 1.5, 10000);
+            reconnectTimeout = setTimeout(connectUserSse, backoff);
+          }
+        };
+      } catch (err) {
+        setUserSseConnected(false);
+        console.error("Failed to connect user notifications SSE in messaging:", err);
+      }
+    }
+
+    connectUserSse();
+
+    return () => {
+      isDisposed = true;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (eventSource) eventSource.close();
+    };
+  }, [selectedConvId]);
+
+  // 3b. Active Conversation SSE Stream with automatic backoff reconnection
   React.useEffect(() => {
     if (!selectedConvId) {
       return;
     }
 
-    const timer = setTimeout(() => {
-      void fetchMessages(selectedConvId);
+    let eventSource: EventSource | null = null;
+    let isDisposed = false;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let backoff = 1000;
+
+    // Initial load of messages deferred to avoid synchronous cascading render
+    const initMsgTimer = setTimeout(() => {
+      if (!isDisposed && selectedConvId) {
+        void fetchMessages(selectedConvId);
+      }
     }, 0);
 
-    // Poll for new messages every 3 seconds while active
-    const pollInterval = setInterval(() => {
-      void fetchMessages(selectedConvId, true);
-    }, 3000);
+    function connectConvSse() {
+      if (isDisposed || !selectedConvId) return;
+
+      try {
+        eventSource = new EventSource(`/api/conversations/${selectedConvId}/events`);
+
+        eventSource.onopen = () => {
+          setConvSseConnected(true);
+          backoff = 1000; // Reset backoff on success
+        };
+
+        eventSource.addEventListener("message", (e) => {
+          try {
+            const newMsg = JSON.parse(e.data);
+            if (!newMsg || !newMsg.id) return;
+
+            setMessages((prev) => {
+              // Deduplicate by message ID
+              if (prev.some((m) => m.id === newMsg.id)) return prev;
+              return [...prev, newMsg];
+            });
+
+            // Update conversation list latest message
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === selectedConvId
+                  ? {
+                      ...c,
+                      latestMessage: {
+                        id: newMsg.id,
+                        content: newMsg.content,
+                        senderId: newMsg.senderId,
+                        senderName: newMsg.sender?.name || newMsg.sender?.email || "User",
+                        createdAt: newMsg.createdAt,
+                        hasAttachments: (newMsg.attachments?.length || 0) > 0,
+                      },
+                      updatedAt: newMsg.createdAt,
+                      unreadCount: 0,
+                    }
+                  : c
+              )
+            );
+
+            // If message is from someone else, mark as read
+            if (newMsg.senderId !== currentUserId) {
+              fetch(`/api/conversations/${selectedConvId}`, { method: "PATCH" }).catch(() => {});
+            }
+          } catch (err) {
+            console.error("Error parsing message SSE event:", err);
+          }
+        });
+
+        eventSource.addEventListener("read", () => {
+          // Read receipt event received
+        });
+
+        eventSource.addEventListener("session_revoked", () => {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          setConvSseConnected(false);
+        });
+
+        eventSource.onerror = () => {
+          setConvSseConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+
+          if (!isDisposed) {
+            backoff = Math.min(backoff * 1.5, 10000);
+            reconnectTimeout = setTimeout(connectConvSse, backoff);
+          }
+        };
+      } catch (err) {
+        setConvSseConnected(false);
+        console.error("Failed to connect conversation SSE:", err);
+      }
+    }
+
+    connectConvSse();
 
     return () => {
-      clearTimeout(timer);
-      clearInterval(pollInterval);
+      isDisposed = true;
+      clearTimeout(initMsgTimer);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (eventSource) eventSource.close();
+      setConvSseConnected(false);
     };
-  }, [selectedConvId, fetchMessages]);
+  }, [selectedConvId, currentUserId, fetchMessages]);
+
+  // 3c. Fallback Polling for active conversation: active only when SSE is not connected
+  React.useEffect(() => {
+    if (!selectedConvId || convSseConnected) return;
+
+    const pollInterval = setInterval(() => {
+      void fetchMessages(selectedConvId, true);
+    }, 4000);
+
+    return () => clearInterval(pollInterval);
+  }, [selectedConvId, convSseConnected, fetchMessages]);
+
+  // 3d. Fallback Polling for conversation list: active only when user SSE is not connected
+  React.useEffect(() => {
+    if (userSseConnected) return;
+
+    const convListPoll = setInterval(() => {
+      void fetchConversations();
+    }, 15000);
+
+    return () => clearInterval(convListPoll);
+  }, [userSseConnected, fetchConversations]);
 
   // Auto-scroll to bottom of message thread
   React.useEffect(() => {
@@ -367,7 +570,12 @@ export function MessagingClient({ currentUserId }: { currentUserId: string }) {
   return (
     <div className="flex h-[calc(100vh-8.5rem)] rounded-2xl border border-border bg-card/40 backdrop-blur-sm overflow-hidden shadow-xl">
       {/* ----------------- LEFT SIDEBAR: CONVERSATION LIST ----------------- */}
-      <div className="w-80 sm:w-96 border-r border-border/80 flex flex-col bg-card/80 shrink-0">
+      <div
+        className={cn(
+          "w-full sm:w-96 border-r border-border/80 flex flex-col bg-card/80 shrink-0",
+          selectedConvId ? "hidden sm:flex" : "flex"
+        )}
+      >
         {/* Header & Search */}
         <div className="p-4 border-b border-border/60 space-y-3">
           <div className="flex items-center justify-between">
@@ -529,12 +737,25 @@ export function MessagingClient({ currentUserId }: { currentUserId: string }) {
       </div>
 
       {/* ----------------- RIGHT PANE: ACTIVE CHAT ----------------- */}
-      <div className="flex-1 flex flex-col bg-background/50 overflow-hidden">
+      <div
+        className={cn(
+          "flex-1 flex flex-col bg-background/50 overflow-hidden",
+          !selectedConvId ? "hidden sm:flex" : "flex"
+        )}
+      >
         {selectedConvId && activeConversation ? (
           <>
             {/* Chat Header */}
-            <div className="h-16 border-b border-border/80 px-6 flex items-center justify-between bg-card/60 backdrop-blur-sm shrink-0">
+            <div className="h-16 border-b border-border/80 px-4 sm:px-6 flex items-center justify-between bg-card/60 backdrop-blur-sm shrink-0">
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedConvId(null)}
+                  className="sm:hidden p-1.5 -ml-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title="Back to conversations"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
                 <Avatar className="h-9 w-9 border border-border shadow-xs">
                   {activeConversation.avatarUrl && (
                     <AvatarImage src={activeConversation.avatarUrl} alt={activeConversation.title} />

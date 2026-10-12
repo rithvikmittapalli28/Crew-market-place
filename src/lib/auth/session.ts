@@ -87,10 +87,17 @@ export async function createSession(params: {
  * - revocation
  * - lastActivityAt
  */
-export async function getSessionRecord(): Promise<SessionWithUser | null> {
+export async function getSessionRecord(tokenOverride?: string): Promise<SessionWithUser | null> {
   try {
-    const cookieStore = await cookies();
-    const rawToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    let rawToken = tokenOverride;
+    if (!rawToken) {
+      try {
+        const cookieStore = await cookies();
+        rawToken = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+      } catch {
+        // Outside Next.js cookies() scope
+      }
+    }
     if (!rawToken) return null;
 
     const tokenHash = hashToken(rawToken);

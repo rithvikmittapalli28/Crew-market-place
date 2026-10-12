@@ -1,11 +1,28 @@
 import crypto from "crypto";
 
-function getStorageSigningSecret(): string {
-  return (
-    process.env.STORAGE_SIGNING_SECRET ||
-    process.env.SESSION_SECRET ||
-    "crewn-production-storage-signing-secret-key-32b"
-  );
+export function getStorageSigningSecret(): string {
+  const secret = process.env.STORAGE_SIGNING_SECRET || process.env.SESSION_SECRET || process.env.AUTH_SECRET;
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (!secret || secret.trim() === "") {
+    throw new Error(
+      "STORAGE_SIGNING_SECRET is missing. A secure storage signing secret (minimum 32 characters) must be configured."
+    );
+  }
+
+  if (secret.length < 32) {
+    throw new Error(
+      `STORAGE_SIGNING_SECRET is insecure: minimum 32 characters required, got ${secret.length} characters.`
+    );
+  }
+
+  if (isProd && !process.env.STORAGE_SIGNING_SECRET) {
+    throw new Error(
+      "STORAGE_SIGNING_SECRET must be explicitly configured in production. Fallbacks to other secrets are forbidden in production."
+    );
+  }
+
+  return secret;
 }
 
 export interface SignedUrlResult {
@@ -57,7 +74,13 @@ export function verifySignedUrlToken(
     return { isValid: false, error: "Signed URL has expired" };
   }
 
-  const secret = getStorageSigningSecret();
+  let secret: string;
+  try {
+    secret = getStorageSigningSecret();
+  } catch (err) {
+    return { isValid: false, error: (err as Error).message };
+  }
+
   const payload = `${key}:${expNum}`;
   const expectedToken = crypto.createHmac("sha256", secret).update(payload).digest("hex");
 

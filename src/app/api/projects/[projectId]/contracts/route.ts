@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireProjectMember, requireBusinessProjectAccess } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
-import { logProjectActivity } from "@/lib/projects/activity";
+import { createContractDraft } from "@/lib/contracts/service";
 
 type RouteParams = { params: Promise<{ projectId: string }> };
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { projectId } = await params;
-    const access = await requireProjectMember(projectId);
+    const sessionCookie = req.cookies.get("crewn_session")?.value;
+    const access = await requireProjectMember(projectId, undefined, sessionCookie);
     if (!access) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -24,6 +25,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
             },
           },
         },
+        business: {
+          select: { id: true, name: true, logoUrl: true },
+        },
       },
     });
 
@@ -31,10 +35,24 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       success: true,
       contracts: contracts.map((c) => ({
         id: c.id,
+        projectId: c.projectId,
+        businessId: c.businessId,
+        business: c.business,
         title: c.title,
         termsText: c.termsText,
+        scopeOfWork: c.scopeOfWork,
+        deliverablesText: c.deliverablesText,
+        milestonesJson: c.milestonesJson,
+        paymentTerms: c.paymentTerms,
+        revisionTerms: c.revisionTerms,
+        cancellationTerms: c.cancellationTerms,
+        effectiveDate: c.effectiveDate,
+        expiresAt: c.expiresAt,
         totalAmount: Number(c.totalAmount),
         status: c.status,
+        declineReason: c.declineReason,
+        executedAt: c.executedAt,
+        hasSignedSnapshot: !!c.signedSnapshotJson,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
         parties: c.parties.map((p) => ({
@@ -42,6 +60,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           userId: p.userId,
           role: p.role,
           signedAt: p.signedAt,
+          ipAddress: p.ipAddress,
+          userAgent: p.userAgent,
+          hasSignature: !!p.signatureDataUrl,
           user: p.user,
         })),
       })),
@@ -55,84 +76,52 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { projectId } = await params;
-    const access = await requireBusinessProjectAccess(projectId, ["OWNER", "MANAGER"]);
+    const sessionCookie = req.cookies.get("crewn_session")?.value;
+    const access = await requireBusinessProjectAccess(projectId, ["OWNER", "MANAGER"], sessionCookie);
     if (!access) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden: Only project owners or managers can create contracts" }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));
-    const { title, termsText, totalAmount, freelancerId } = body;
-
-    if (!title || typeof title !== "string" || !title.trim()) {
-      return NextResponse.json({ error: "Contract title is required" }, { status: 400 });
-    }
-
-    if (!termsText || typeof termsText !== "string" || !termsText.trim()) {
-      return NextResponse.json({ error: "Contract termsText is required" }, { status: 400 });
-    }
+    const {
+      title,
+      termsText,
+      totalAmount,
+      scopeOfWork,
+      deliverablesText,
+      milestonesJson,
+      paymentTerms,
+      revisionTerms,
+      cancellationTerms,
+      effectiveDate,
+      expiresAt,
+      freelancerId,
+    } = body;
 
     const amountNum = parseFloat(String(totalAmount ?? 0));
-    if (isNaN(amountNum) || amountNum < 0) {
-      return NextResponse.json({ error: "Valid non-negative totalAmount is required" }, { status: 400 });
-    }
 
-    // Resolve freelancer party
-    let targetFreelancerId = freelancerId;
-    if (!targetFreelancerId) {
-      const member = await prisma.projectMember.findFirst({
-        where: {
-          projectId,
-          role: { in: ["FREELANCER", "TEAM_MEMBER"] },
-        },
-      });
-      targetFreelancerId = member?.userId;
-    }
-
-    const contract = await prisma.$transaction(async (tx) => {
-      const c = await tx.contract.create({
-        data: {
-          projectId,
-          businessId: access.businessId,
-          title: title.trim(),
-          termsText: termsText.trim(),
-          totalAmount: amountNum,
-          status: "DRAFT",
-          parties: {
-            create: [
-              {
-                userId: access.user.id,
-                role: "CLIENT_SIGNER",
-              },
-              ...(targetFreelancerId
-                ? [
-                    {
-                      userId: targetFreelancerId,
-                      role: "FREELANCER_SIGNER",
-                    },
-                  ]
-                : []),
-            ],
-          },
-        },
-        include: {
-          parties: true,
-        },
-      });
-      return c;
+    const contract = await createContractDraft({
+      projectId,
+      businessId: access.businessId,
+      authorUserId: access.user.id,
+      title,
+      termsText,
+      totalAmount: isNaN(amountNum) ? 0 : amountNum,
+      scopeOfWork,
+      deliverablesText,
+      milestonesJson: typeof milestonesJson === "object" ? JSON.stringify(milestonesJson) : milestonesJson,
+      paymentTerms,
+      revisionTerms,
+      cancellationTerms,
+      effectiveDate,
+      expiresAt,
+      freelancerUserId: freelancerId,
     });
 
-    logProjectActivity({
-      projectId,
-      entityType: "CONTRACT",
-      entityId: contract.id,
-      action: "CONTRACT_CREATED",
-      actorId: access.user.id,
-      metadata: { title: contract.title, totalAmount: amountNum },
-    }).catch(console.error);
-
     return NextResponse.json({ success: true, contract }, { status: 201 });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Create contract error:", error);
-    return NextResponse.json({ error: "Failed to create contract" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to create contract";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

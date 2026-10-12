@@ -37,7 +37,20 @@ export async function GET(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Deliverable not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ deliverable });
+    const serializedDeliverable = {
+      ...deliverable,
+      versions: deliverable.versions.map((v) => ({
+        ...v,
+        file: v.file
+          ? {
+              ...v.file,
+              fileSize: Number(v.file.fileSize),
+            }
+          : null,
+      })),
+    };
+
+    return NextResponse.json({ deliverable: serializedDeliverable });
   } catch (error) {
     console.error("Get deliverable error:", error);
     return NextResponse.json({ error: "Failed to get deliverable" }, { status: 500 });

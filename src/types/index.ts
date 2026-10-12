@@ -86,15 +86,36 @@ export type NotificationType =
   | "TASK"
   | "PAYMENT"
   | "MESSAGE"
-  | "SYSTEM";
+  | "SYSTEM"
+  | "CONTRACT"
+  | "INVOICE"
+  | "DISPUTE"
+  | "MODERATION"
+  | "ADMIN";
 
-export type ContractStatus = "DRAFT" | "SENT" | "EXECUTED" | "TERMINATED";
+export type ContractStatus = "DRAFT" | "SENT" | "EXECUTED" | "DECLINED" | "TERMINATED";
 
 export type DisputeStatus =
   | "OPEN"
+  | "UNDER_REVIEW"
+  | "EVIDENCE_REQUESTED"
+  | "ESCALATED"
+  | "RESOLVED_BUYER"
+  | "RESOLVED_CREATOR"
+  | "PARTIAL_RESOLUTION"
+  | "CLOSED"
   | "UNDER_MEDIATION"
   | "RESOLVED"
   | "CANCELLED";
+
+export type ModerationStatus =
+  | "PENDING"
+  | "INVESTIGATING"
+  | "ACTION_TAKEN_WARNING"
+  | "ACTION_TAKEN_SUSPENDED"
+  | "ACTION_TAKEN_CONTENT_REMOVED"
+  | "RESOLVED_NO_ACTION"
+  | "DISMISSED";
 
 export type PricingType = "FIXED" | "HOURLY" | "STARTING_FROM";
 
@@ -601,11 +622,36 @@ export interface Dispute {
   id: string;
   projectId: string;
   milestoneId?: string | null;
+  contractId?: string | null;
   initiatorId: string;
   respondentId: string;
+  category?: string | null;
   reason: string;
   status: DisputeStatus;
   resolution?: string | null;
+  adminNotes?: string | null;
+  resolutionAction?: string | null;
+  refundAmount?: number | null;
+  releaseAmount?: number | null;
+  resolvedAt?: Date | null;
+  resolvedById?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ModerationReport {
+  id: string;
+  reporterId: string;
+  targetType: "USER" | "CREATOR_PROFILE" | "PORTFOLIO_ITEM" | "SERVICE" | "PROJECT" | string;
+  targetId: string;
+  category: string;
+  reason: string;
+  evidenceJson?: string | null;
+  status: ModerationStatus;
+  adminNotes?: string | null;
+  actionTaken?: string | null;
+  reviewedById?: string | null;
+  reviewedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

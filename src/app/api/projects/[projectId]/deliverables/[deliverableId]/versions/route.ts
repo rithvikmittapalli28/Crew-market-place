@@ -78,7 +78,17 @@ export async function POST(req: NextRequest, { params }: Params) {
       metadata: { versionNumber: newVersionNumber, deliverableTitle: deliverable.title },
     }).catch(console.error);
 
-    return NextResponse.json({ success: true, version }, { status: 201 });
+    const serializedVersion = {
+      ...version,
+      file: version.file
+        ? {
+            ...version.file,
+            fileSize: Number(version.file.fileSize),
+          }
+        : null,
+    };
+
+    return NextResponse.json({ success: true, version: serializedVersion }, { status: 201 });
   } catch (error) {
     console.error("Submit version error:", error);
     return NextResponse.json({ error: "Failed to submit version" }, { status: 500 });

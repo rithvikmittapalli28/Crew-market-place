@@ -18,6 +18,7 @@ export interface LogPayload {
     | "BACKGROUND_JOB"
     | "SECURITY"
     | "API";
+  requestId?: string | null;
   userId?: string | null;
   actorId?: string | null;
   ipAddress?: string | null;
@@ -25,6 +26,8 @@ export interface LogPayload {
   timestamp?: string;
   [key: string]: unknown;
 }
+
+export type ErrorTracker = (error: Error | unknown, context?: Record<string, unknown>) => void;
 
 const SENSITIVE_KEYS = new Set([
   "password",
@@ -94,6 +97,7 @@ class Logger {
       level: level.toUpperCase(),
       message: payload.message,
       category: payload.category || "API",
+      requestId: payload.requestId || null,
       userId: payload.userId,
       actorId: payload.actorId,
       ipAddress: payload.ipAddress,
@@ -135,9 +139,30 @@ class Logger {
     console.warn(this.format("warn", p));
   }
 
+  private errorTracker: ErrorTracker | null = null;
+
+  setErrorTracker(tracker: ErrorTracker | null) {
+    this.errorTracker = tracker;
+  }
+
   error(payload: LogPayload | string, details?: unknown) {
     const p: LogPayload = typeof payload === "string" ? { message: payload, details } : payload;
     console.error(this.format("error", p));
+    if (this.errorTracker) {
+      try {
+        const sanitizedDetails = p.details ? (sanitizeLogData(p.details) as Record<string, unknown>) : undefined;
+        this.errorTracker(
+          p.details instanceof Error ? p.details : new Error(p.message),
+          {
+            category: p.category,
+            requestId: p.requestId,
+            details: sanitizedDetails,
+          }
+        );
+      } catch {
+        // Tracker failure must never interrupt request lifecycle
+      }
+    }
   }
 
   audit(payload: LogPayload | string, details?: unknown) {

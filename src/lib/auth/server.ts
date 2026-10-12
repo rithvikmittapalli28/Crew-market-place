@@ -7,8 +7,8 @@ import type { UserRole, AuthUser, BusinessRole, ProjectMemberRole } from "@/type
  * Retrieves the full user record from PostgreSQL for the current authoritative database session.
  * Always loads the current User from the database for authorization decisions.
  */
-export async function getCurrentUser(): Promise<AuthUser | null> {
-  const sessionRecord = await getSessionRecord();
+export async function getCurrentUser(tokenOverride?: string): Promise<AuthUser | null> {
+  const sessionRecord = await getSessionRecord(tokenOverride);
   if (!sessionRecord?.user || !sessionRecord.user.isActive) return null;
 
   const user = await prisma.user.findUnique({
@@ -220,13 +220,14 @@ export async function requireRecentAuthentication(
  */
 export async function requireProjectMember(
   projectId: string,
-  allowedRoles?: ProjectMemberRole[]
+  allowedRoles?: ProjectMemberRole[],
+  tokenOverride?: string
 ): Promise<{
   user: AuthUser;
   membership: { id: string; role: ProjectMemberRole } | null;
   isBusinessOverride: boolean;
 } | null> {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(tokenOverride);
   if (!user) return null;
 
   // Check direct ProjectMember record
@@ -270,13 +271,14 @@ export async function requireProjectMember(
  */
 export async function requireBusinessProjectAccess(
   projectId: string,
-  requiredRoles?: BusinessRole[]
+  requiredRoles?: BusinessRole[],
+  tokenOverride?: string
 ): Promise<{
   user: AuthUser;
   businessId: string;
   businessRole: BusinessRole;
 } | null> {
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(tokenOverride);
   if (!user) return null;
 
   const project = await prisma.project.findUnique({
